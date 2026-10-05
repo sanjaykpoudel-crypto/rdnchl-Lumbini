@@ -73,7 +73,9 @@ public sealed class RelayHost
     {
         var started = DateTime.UtcNow;
         var request = context.Request;
-        var clientIp = context.Connection.RemoteIpAddress?.MapToIPv4().ToString() ?? "?";
+        var remote = context.Connection.RemoteIpAddress;
+        // dual-stack sockets report IPv4 clients as ::ffff:a.b.c.d; only those are converted
+        var clientIp = remote == null ? "?" : (remote.IsIPv4MappedToIPv6 ? remote.MapToIPv4() : remote).ToString();
         int status;
 
         if (allowedIps.Count > 0 && !allowedIps.Contains(clientIp))
