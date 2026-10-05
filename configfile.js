@@ -1,6 +1,6 @@
 define([], function(){ 
  return {
-postonapprove: true
+postonapprove: true,
 certid: 'custcertificatensnpi'
 }
 })

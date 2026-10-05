@@ -8,7 +8,7 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                 if (context.type === 'view') {
                     const form = context.form
                     const isRealTime = context.newRecord.getValue('custrecord_is_real_time')
-                    const batch = JSON.parse(context.newRecord.getValue('custrecord_nchl_tran_batch'))
+                    const batch = JSON.parse(context.newRecord.getValue('custrecord_nchl_tran_batch') || '{}')
                     /*const instruction = JSON.parse(context.newRecord.getValue('custrecord_nchl_tran_instruction'))
                     const batchstr = `${batch.batchId},${batch.debtorAgent},${batch.debtorBranch},${batch.debtorAccount},${batch.batchAmount},${batch.batchCrncy}`
                     let transtr
@@ -44,58 +44,34 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                     })*/
                     let status = 'empty', showreason = false, reasonmsg = 'empty'
                     const tranresp = context.newRecord.getValue('custrecord_nchl_tran_response')
-                    const devUser = runtime.getCurrentUser()
-                    if (devUser.email === 'muskanworkemail@gmail.com') {
-                      const instructionfield = form.getField({id: 'custrecord_nchl_tran_instruction'})
-                      instructionfield.updateDisplayType({displayType: 'normal'})
-                        form.addField({
-                            id: 'custpage_devfield_temp',
-                            label: 'dev field temp',
-                            type: 'longtext'
-                        }).defaultValue = tranresp
-                    }
                     let msgType = message.Type.ERROR, msgTitle = 'ERROR', msgDetail = ''
                     if (tranresp) {
-                        const savedResponse = JSON.parse(tranresp)
-                        if (savedResponse.hasOwnProperty('responseResult')) { //for biller transaction
-                            status = savedResponse.responseResult.responseDescription
-                        } else if (savedResponse.hasOwnProperty('cipsBatchResponse') && savedResponse.hasOwnProperty('cipsTxnResponseList')) {
-                            let batchStatus = savedResponse.cipsBatchResponse.responseCode === '000'
-                            let linelevel = false, creditPendin = false, lineReponseCodes = []
-                            const lineMessages = []
-                            savedResponse.cipsTxnResponseList.forEach(listresp => {
-                                linelevel = listresp.responseCode === '000'
-                                lineReponseCodes.push(listresp.responseCode)
-                                lineMessages.push(listresp.responseMessage)
-                            })
-                            const allCreditsSuccess = lineReponseCodes.every(elm => elm === '000')
-                            //status = batchStatus === true && linelevel === true ? 'SUCCESS' : 'FAILED'
-                            status = batchStatus === true && allCreditsSuccess === true ? 'SUCCESS' : 'FAILED'
-                            if (allCreditsSuccess === false) {
-                                status = lineReponseCodes.includes('ENTR') ? 'IN-PROGRESS' : 'FAILED'
-                            }
-                            if (status === 'FAILED') {
-                                showreason = true
-                                reasonmsg = savedResponse.cipsBatchResponse.responseMessage
-                                msgDetail = reasonmsg
-                            } else if (status === 'IN-PROGRESS') {
-                                showreason = true
-                                reasonmsg = lineMessages.join('<br/>')
-                                msgType = message.Type.INFORMATION
-                                msgTitle = 'In Progress'
-                                msgDetail = reasonmsg
-                            } else if (status === "SUCCESS") {
-                                msgType = message.Type.CONFIRMATION
-                                msgTitle = status
-                            }
-                        } else if (savedResponse.hasOwnProperty('responseCode') && savedResponse.hasOwnProperty('responseDescription')) {
-                            const messageArray = []
-                            savedResponse.fieldErrors.forEach(fielderr => {
-                                messageArray.push(fielderr.message)
-                            })
+                        const tranStatus = rdmodu.gettranstatus(tranresp)
+                        let isBiller = false
+                        try {
+                            isBiller = JSON.parse(tranresp).hasOwnProperty('responseResult')
+                        } catch (e) {
+                            // not JSON: the request to NCHL failed before a response was received
+                        }
+                        status = isBiller ? tranStatus.message : tranStatus.status
+                        if (tranStatus.status === 'FAILED') {
                             showreason = true
-                            status = 'FAILED'
-                            reasonmsg = messageArray.join('<br/>')
+                            reasonmsg = tranStatus.message
+                            msgDetail = reasonmsg
+                        } else if (tranStatus.status === 'IN-PROGRESS') {
+                            showreason = true
+                            reasonmsg = tranStatus.message
+                            msgType = message.Type.INFORMATION
+                            msgTitle = 'In Progress'
+                            msgDetail = reasonmsg
+                        } else if (tranStatus.status === 'SUCCESS') {
+                            msgType = message.Type.CONFIRMATION
+                            msgTitle = tranStatus.status
+                        } else if (tranStatus.status === 'UNKNOWN') {
+                            showreason = true
+                            reasonmsg = 'Result not confirmed by NCHL. Check the status with NCHL before paying again. ' + tranStatus.message
+                            msgType = message.Type.WARNING
+                            msgTitle = 'Unknown'
                             msgDetail = reasonmsg
                         }
                         if (showreason) {
@@ -106,7 +82,9 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                             }).updateDisplayType({displayType: 'inline'})
                                 .defaultValue = reasonmsg
                         }
-                        if (status === 'IN-PROGRESS') {
+                        // IPS (mode '2') responses only confirm the batch was received, so let the user query settlement
+                        const isIps = context.newRecord.getValue('custrecord_nchl_tran_mode') === '2'
+                        if (status === 'IN-PROGRESS' || (status === 'UNKNOWN' && isIps)) {
                             /* form.addButton({
                                  id: 'custpage_reinitiate',
                                  label: 'Reinitiate',

@@ -100,13 +100,21 @@ define(['N/ui/serverWidget', './rdmodule', 'N/record', 'N/search', 'N/ui/message
                         freeCode2: ''
                     }
                     const docDetail = rdmodu.getdocdetail(params)
-                    if(docDetail.data.responseCode === '015') {
-                        const emsg = message.create({
-                            type: message.Type.ERROR,
-                            title: '',
-                            message: docDetail.data.responseDescription
+                    // getdocdetail returns a plain string when the request could not be made
+                    const docError = typeof docDetail === 'string' || !docDetail.data
+                        ? (typeof docDetail === 'string' ? docDetail : JSON.stringify(docDetail))
+                        : (docDetail.data.responseCode === '015' ? docDetail.data.responseDescription : '')
+                    if (docError) {
+                        // message.show() only works in the browser; on the server the message is added to the page
+                        form.addPageInitMessage({
+                            message: message.create({
+                                type: message.Type.ERROR,
+                                title: 'DOC detail not available',
+                                message: docError
+                            })
                         })
-                        emsg.show(5000)
+                        context.response.writePage(form)
+                        return
                     }
                     appIdField.defaultValue = context.request.parameters.custpage_appid
                     memoField.updateDisplayType({displayType: serverWidget.FieldDisplayType.INLINE}).defaultValue = context.request.parameters.custpage_memo

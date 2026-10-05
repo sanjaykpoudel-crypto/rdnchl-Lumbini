@@ -3,10 +3,11 @@
  * @NScriptType UserEventScript
  */
 
-define(['N/url'], function (url) {
+define(['N/url', './rdmodule'], function (url, rdmodu) {
     return {
         beforeLoad: context => {
-            if(context.type === 'view') {
+            if(context.type === 'view' && !context.newRecord.getValue('custbody_rdnchl_paid_online')
+                && !rdmodu.getactivenchltran(context.newRecord.id)) {
                 const form = context.form
                 const pageUrl = url.resolveScript({
                     scriptId: 'customscript_bulk_payment_page',

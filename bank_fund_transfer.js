@@ -120,7 +120,7 @@ define(['N/ui/serverWidget', 'N/search', 'N/task'], function (serverWidget, sear
                             taskType: task.TaskType.SCHEDULED_SCRIPT,
                             scriptId: 'customscript_process_payment_schedule',
                             deploymentId: 'customdeploy_process_payment_schedule',
-                            params: {custscript_nchl_script_params: {type: 'transfer', records: selectedTrans}}
+                            params: {custscript_nchl_script_params: JSON.stringify({type: 'transfer', records: selectedTrans})}
                         })
                         const taskId = scheduletask.submit()
                     }

@@ -11,7 +11,7 @@ define(['N/file'], function (file) {
                     log.debug('EVENT_TYPE', 'triggered on ' + context.type)
                     const postOnApprove = context.newRecord.getValue('custrecord_post_pmt_on_approve')
                     const certificateId = context.newRecord.getValue('custrecord_cert_id')
-                    fileContent += `postonapprove: ${postOnApprove}\n`
+                    fileContent += `postonapprove: ${postOnApprove},\n`
                     fileContent += `certid: '${certificateId}'\n`
                     fileContent += `}\n})`
                     log.debug('UPDATED_CONTENT', fileContent)

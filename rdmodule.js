@@ -1,16 +1,17 @@
 /**
  * @NApiVersion 2.x
  */
-define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 'N/crypto/certificate'],
-    function (http, encode, npiconf, cache, search, record, certificate) {
+define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 'N/crypto/certificate', 'N/error'],
+    function (http, encode, npiconf, cache, search, record, certificate, error) {
 
         return {
             generatetoken: function () {
                 try {
+                    // Basic auth requires standard base64; the URL-safe alphabet changes '+' and '/'
                     const b64basic = encode.convert({
                         string: npiconf.USERNAME + ':' + npiconf.PASSWORD,
                         inputEncoding: encode.Encoding.UTF_8,
-                        outputEncoding: encode.Encoding.BASE_64_URL_SAFE
+                        outputEncoding: encode.Encoding.BASE_64
                     })
                     const reqHeaders = {
                         "Authorization": 'Basic ' + b64basic,
@@ -27,13 +28,19 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                         headers: reqHeaders,
                         body: postBody
                     })
+                    if (response.code !== 200) {
+                        throw error.create({
+                            name: 'NPI_TOKEN_ERROR',
+                            message: 'NPI token request failed with HTTP ' + response.code + ': ' + response.body
+                        })
+                    }
                     return response.body
                 } catch (e) {
                     log.error({
                         title: 'GEN_TOKEN_FN_ERROR',
                         details: e
                     })
-                    return []
+                    throw e
                 }
             },
             getbanklist: function (option) {
@@ -102,8 +109,8 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 }
             },
             getbillertypes: function (type = 'ALL') {
-                const npiAuth = JSON.parse(this.generatetoken())
                 try {
+                    const npiAuth = JSON.parse(this.generatetoken())
                     const response = http.request({
                         method: http.Method.POST,
                         url: npiconf.HOST + '/billers/v2/categories',
@@ -300,8 +307,8 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 })
             },
             getappgroupid: function (appcode) {
-                const npiAuth = JSON.parse(this.generatetoken())
                 try {
+                    const npiAuth = JSON.parse(this.generatetoken())
                     const response = http.request({
                         method: http.Method.POST,
                         url: npiconf.HOST + '/billers/v2/appjourneydetails',
@@ -324,8 +331,8 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 }
             },
             getdocofficelist: function (appid) {
-                const npiAuth = JSON.parse(this.generatetoken())
                 try {
+                    const npiAuth = JSON.parse(this.generatetoken())
                     const appGroupId = this.getappgroupid(appid)
                     const response = http.request({
                         method: http.Method.POST,
@@ -447,7 +454,8 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                     token: signedToken
                 }
                 log.debug('REQ_BODY', requestBody)
-                const isRealTime = nchlTranRecord.getValue('custbody_nchl_payment_type') === '1'
+                // custrecord_nchl_tran_mode is set by savenchltran: '1' = CIPS (real time), '2' = IPS
+                const isRealTime = nchlTranRecord.getValue('custrecord_nchl_tran_mode') === '1'
                 const preApiUri = isRealTime ? '/api/billpayment/' : '/api/ips/billpayment/'
                 const apiUrl = option.reqtype === 'lodge' ? 'lodgebillpay.do' : 'confirmbillpay.do'
                 const url = npiconf.HOST + preApiUri + apiUrl
@@ -480,7 +488,14 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                     columns: [relatedBankField]
                 })
                 log.debug('COABANK', coaBank)
-                bankRecordId = coaBank[relatedBankField][0].value
+                const linkedBank = coaBank[relatedBankField]
+                if (!linkedBank || linkedBank.length === 0) {
+                    throw error.create({
+                        name: 'NCHL_COA_BANK_MISSING',
+                        message: 'GL account ' + coaid + ' has no ' + bankType + ' NCHL bank detail linked (' + relatedBankField + ')'
+                    })
+                }
+                const bankRecordId = linkedBank[0].value
                 return search.lookupFields({
                     type: 'customrecord_rd_nchl_bank_detail',
                     id: bankRecordId,
@@ -517,6 +532,83 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 })
                 log.debug('IPS_TRAN_DET_RESP', response)
                 return response
+            },
+            /**
+             * Classifies a saved NCHL response (custrecord_nchl_tran_response)
+             * @param {string} responseText
+             * @returns {{status: string, message: string, lineMessages: string[]}} status is SUCCESS, FAILED, IN-PROGRESS or UNKNOWN
+             */
+            gettranstatus: function (responseText) {
+                const result = {status: 'UNKNOWN', message: '', lineMessages: []}
+                if (!responseText) {
+                    return result
+                }
+                let resp
+                try {
+                    resp = JSON.parse(responseText)
+                } catch (e) {
+                    result.message = responseText
+                    return result
+                }
+                if (resp.hasOwnProperty('responseResult')) { //for biller transaction
+                    result.status = resp.responseResult.responseCode === '000' ? 'SUCCESS' : 'FAILED'
+                    result.message = resp.responseResult.responseDescription
+                } else if (resp.hasOwnProperty('cipsBatchResponse')) {
+                    const lines = resp.cipsTxnResponseList || []
+                    result.lineMessages = lines.map(line => line.responseMessage)
+                    const batchSuccess = resp.cipsBatchResponse.responseCode === '000'
+                    const allCreditsSuccess = lines.length > 0 && lines.every(line =>
+                        line.responseCode === '000' && (line.creditStatus === undefined || line.creditStatus === '000'))
+                    const inProgress = lines.some(line => line.responseCode === 'ENTR' || line.creditStatus === 'ENTR')
+                    if (batchSuccess && allCreditsSuccess) {
+                        result.status = 'SUCCESS'
+                    } else if (inProgress) {
+                        result.status = 'IN-PROGRESS'
+                        result.message = result.lineMessages.join('<br/>')
+                    } else {
+                        result.status = 'FAILED'
+                        result.message = resp.cipsBatchResponse.responseMessage
+                    }
+                } else if (resp.hasOwnProperty('responseCode') && resp.hasOwnProperty('responseDescription')) {
+                    if (resp.responseCode !== '000' || resp.fieldErrors) {
+                        result.status = 'FAILED'
+                        result.message = resp.fieldErrors && resp.fieldErrors.length > 0
+                            ? resp.fieldErrors.map(fielderr => fielderr.message).join('<br/>')
+                            : resp.responseDescription
+                    }
+                }
+                return result
+            },
+            /**
+             * Finds an earlier NCHL transaction for the same NetSuite record that has not definitely failed.
+             * Used to block a second payment while the first one succeeded, is in progress or has an unknown result.
+             * @param {string|number} relrecordid internal id of the vendor payment / prepayment / journal
+             * @returns {{id: string, name: string, status: string}|null}
+             */
+            getactivenchltran: function (relrecordid) {
+                let active = null
+                search.create({
+                    type: 'customrecord_nchl_transaction',
+                    filters: [
+                        ['custrecord_nchl_tran_rel_record', 'anyof', relrecordid],
+                        'AND',
+                        ['isinactive', 'is', 'F']
+                    ],
+                    columns: ['name']
+                }).run().each(result => {
+                    const saved = search.lookupFields({
+                        type: 'customrecord_nchl_transaction',
+                        id: result.id,
+                        columns: ['custrecord_nchl_tran_response']
+                    })
+                    const tranStatus = this.gettranstatus(saved.custrecord_nchl_tran_response)
+                    if (tranStatus.status !== 'FAILED') {
+                        active = {id: result.id, name: result.getValue('name'), status: tranStatus.status}
+                        return false
+                    }
+                    return true
+                })
+                return active
             }
         }
     })

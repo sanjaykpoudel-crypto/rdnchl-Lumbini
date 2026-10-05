@@ -55,7 +55,8 @@ define(['N/url', './rdmodule', 'N/record', 'N/runtime'], function (url, rdmodu, 
                 }
             }
             if (context.type === 'view') {
-                if (context.newRecord.getValue('approvalstatus') === '2' && !context.newRecord.getValue('custbody_rdnchl_paid_online')) {
+                if (context.newRecord.getValue('approvalstatus') === '2' && !context.newRecord.getValue('custbody_rdnchl_paid_online')
+                    && !rdmodu.getactivenchltran(context.newRecord.id)) {
                     const targetUrl = url.resolveScript({
                         scriptId: 'customscript_payment_detail_confirm_sl',
                         deploymentId: 'customdeploy_payment_detail_confirm_sl',

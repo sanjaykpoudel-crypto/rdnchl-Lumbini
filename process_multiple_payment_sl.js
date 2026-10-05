@@ -108,7 +108,7 @@ define(['N/ui/serverWidget', './mpmod', 'N/task', 'N/url'], function (serverWidg
                                 name: 'custcol_doc_no',
                                 line: x
                             }),
-                            tranid: context.request.getSublistValue({
+                            entity: context.request.getSublistValue({
                                 group: 'paymentlist',
                                 name: 'custcol_entity',
                                 line: x
@@ -131,7 +131,8 @@ define(['N/ui/serverWidget', './mpmod', 'N/task', 'N/url'], function (serverWidg
                         taskType: task.TaskType.SCHEDULED_SCRIPT,
                         scriptId: 'customscript_process_payment_schedule',
                         deploymentId: 'customdeploy_process_payment_schedule',
-                        params: {custscript_nchl_script_params: paymentList}
+                        // script parameters are strings; the scheduled script expects {type, records}
+                        params: {custscript_nchl_script_params: JSON.stringify({type: 'payment', records: paymentList})}
                     })
                     const taskId = scheduletask.submit()
                 }

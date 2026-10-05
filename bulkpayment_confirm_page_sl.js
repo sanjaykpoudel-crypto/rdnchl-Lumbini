@@ -3,6 +3,57 @@
  * @NScriptType Suitelet
  */
 define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redirect'], function (serverWidget, record, rdmod, message, redirect) {
+    /**
+     * Reads debtor and creditor bank details from the journal. Used on GET to build the page and on POST so the
+     * amounts and bank accounts sent to NCHL come from the journal, not from the submitted form.
+     * @param {record.Record} paymentRecord
+     */
+    function getjournalpayment(paymentRecord) {
+        const pmtType = paymentRecord.getValue('custbody_nchl_payment_type')
+        const lineCount = paymentRecord.getLineCount({sublistId: 'line'})
+        let debtorBankDetails = '', debtorMissing = false, creditTotal = 0, messageText = ''
+        const creditLines = []
+        for (let i = 0; i < lineCount; i++) {
+            const debit = paymentRecord.getSublistValue({sublistId: 'line', fieldId: 'debit', line: i})
+            const credit = paymentRecord.getSublistValue({sublistId: 'line', fieldId: 'credit', line: i})
+            const bankRecord = paymentRecord.getSublistValue({
+                sublistId: 'line',
+                fieldId: 'custcol_col_entity_bank',
+                line: i
+            })
+            if (debit) {
+                const coaId = paymentRecord.getSublistValue({
+                    sublistId: 'line',
+                    fieldId: 'account',
+                    line: i
+                })
+                log.debug('COA_ID', coaId)
+                if (coaId) {
+                    const bankType = pmtType === '1' ? 'CIPS' : 'IPS'
+                    debtorBankDetails = rdmod.getcoabankdetail(coaId, bankType)
+                    log.debug('COA_BANk', debtorBankDetails)
+                } else {
+                    debtorMissing = true
+                }
+            }
+            if (!bankRecord && credit) {
+                messageText += `line ${i + 1} doesn't have bank account selected\n`
+            } else if (bankRecord && credit) {
+                const lineMemo = paymentRecord.getSublistValue({
+                    sublistId: 'line',
+                    fieldId: 'memo',
+                    line: i
+                })
+                const bankDetails = rdmod.getbankdetail(bankRecord)
+                bankDetails.amount = credit
+                bankDetails.linememo = lineMemo ? lineMemo : 'empty'
+                creditLines.push(bankDetails)
+                creditTotal += parseFloat(credit)
+            }
+        }
+        return {pmtType, debtorBankDetails, debtorMissing, creditLines, creditTotal, messageText}
+    }
+
     return {
         onRequest: context => {
             const form = serverWidget.createForm({title: 'Bulk Payment'})
@@ -12,7 +63,22 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
                         type: context.request.parameters.recordtype,
                         id: context.request.parameters.recordid
                     })
-                    const pmtType = paymentRecord.getValue('custbody_nchl_payment_type')
+                    const activeTran = rdmod.getactivenchltran(context.request.parameters.recordid)
+                    if (paymentRecord.getValue('custbody_rdnchl_paid_online') || activeTran) {
+                        form.addPageInitMessage({
+                            message: message.create({
+                                type: message.Type.WARNING,
+                                title: 'Payment already submitted',
+                                message: activeTran
+                                    ? `NCHL transaction ${activeTran.name} for this journal is ${activeTran.status}. Check its status instead of paying again.`
+                                    : 'This journal is already marked as paid online.'
+                            })
+                        })
+                        context.response.writePage({pageObject: form})
+                        return
+                    }
+                    const journalPayment = getjournalpayment(paymentRecord)
+                    const pmtType = journalPayment.pmtType
                     const paymentTypeField = form.addField({
                         id: 'custpage_payment_type',
                         label: 'Payment Type',
@@ -26,8 +92,14 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
                         label: 'Bank',
                         type: serverWidget.FieldType.SELECT
                     })
-                    const lineCount = paymentRecord.getLineCount({sublistId: 'line'})
-                    let messageBox = {}, creditTotal = 0, creditLines = [], messageText = ''
+                    let messageBox = {}
+                    const {debtorBankDetails, creditLines, creditTotal, messageText} = journalPayment
+                    if (journalPayment.debtorMissing) {
+                        messageBox = {
+                            type: message.Type.ERROR,
+                            message: 'Debtor Bank Detail not available'
+                        }
+                    }
                     const formSublist = form.addSublist({
                         id: 'batch_transaction',
                         label: 'Batch Transaction',
@@ -80,54 +152,6 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
                         label: 'Amount',
                         type: serverWidget.FieldType.CURRENCY
                     })
-                    let debtorBankDetails = ''
-                    for (let i = 0; i < lineCount; i++) {
-                        const debit = paymentRecord.getSublistValue({sublistId: 'line', fieldId: 'debit', line: i})
-                        const credit = paymentRecord.getSublistValue({sublistId: 'line', fieldId: 'credit', line: i})
-                        const bankRecord = paymentRecord.getSublistValue({
-                            sublistId: 'line',
-                            fieldId: 'custcol_col_entity_bank',
-                            line: i
-                        })
-                        if (debit) {
-                            const coaId = paymentRecord.getSublistValue({
-                                sublistId: 'line',
-                                fieldId: 'account',
-                                line: i
-                            })
-                            log.debug('COA_ID', coaId)
-                            if (coaId) {
-                                const bankType = pmtType === '1' ? 'CIPS' : 'IPS'
-                                debtorBankDetails = rdmod.getcoabankdetail(coaId, bankType)
-                                log.debug('COA_BANk', debtorBankDetails)
-                                /*messageBox = {
-                                    type: message.Type.INFORMATION,
-                                    message: JSON.stringify(debtorBankDetails)
-                                }*/
-                            } else {
-                                messageBox = {
-                                    type: message.Type.ERROR,
-                                    message: 'Debtor Bank Detail not available'
-                                }
-                            }
-
-                        }
-                        if (!bankRecord && credit) {
-                            messageText += `line ${i + 1} doesn't have bank account selected\n`
-                        } else if (bankRecord && credit) {
-                            const lineMemo = paymentRecord.getSublistValue({
-                                sublistId: 'line',
-                                fieldId: 'memo',
-                                line: i
-                            })
-                            const bankDetails = rdmod.getbankdetail(bankRecord)
-                            bankDetails.amount = credit
-                            bankDetails.linememo = lineMemo ? lineMemo : 'empty'
-                            creditLines.push(bankDetails)
-                            //messageBox = JSON.stringify(bankDetails)
-                            creditTotal += parseFloat(credit)
-                        }
-                    }
                     if (messageText) {
                         messageBox = {
                             type: message.Type.ERROR,
@@ -223,92 +247,71 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
             } else {
                 try {
                     const requestParams = context.request
-                    const lineCount = requestParams.getLineCount({group: 'batch_transaction'})
+                    const relRecProp = JSON.parse(requestParams.parameters.custpage_relrecord)
+                    // Re-check on submit: the form may have been opened twice or submitted twice
+                    const activeTran = rdmod.getactivenchltran(relRecProp.id)
+                    if (activeTran) {
+                        redirect.toRecord({
+                            type: 'customrecord_nchl_transaction',
+                            id: activeTran.id
+                        })
+                        return
+                    }
+                    // Amounts and bank accounts are re-read from the journal; only memo and purpose come from the form
+                    const journalPayment = getjournalpayment(record.load({type: relRecProp.type, id: relRecProp.id}))
+                    if (journalPayment.debtorMissing || journalPayment.messageText || journalPayment.creditLines.length === 0) {
+                        throw new Error(journalPayment.messageText || 'Debtor Bank Detail not available')
+                    }
+                    const debtor = journalPayment.debtorBankDetails
+                    const paymentType = journalPayment.pmtType === '1' ? 'CIPS' : 'IPS'
                     const params = {
-                        paymenttype: requestParams.parameters.custpage_payment_type,
-                        amount: requestParams.parameters.custpage_batch_amount,
+                        paymenttype: paymentType,
+                        amount: journalPayment.creditTotal,
                         purpose: requestParams.parameters.custpage_category_purpose,
-                        drbank: requestParams.parameters.custpage_dr_bank,
-                        drbankbranch: requestParams.parameters.custpage_dr_bank_branch,
-                        draccountname: requestParams.parameters.custpage_dr_bank_ac_name,
-                        draccount: requestParams.parameters.custpage_dr_bank_ac_number,
+                        drbank: JSON.parse(debtor.custrecord_rdnchl_bank_prop).value,
+                        drbankbranch: JSON.parse(debtor.custrecord_rdnchl_bank_branch_prop).value,
+                        draccountname: debtor.custrecord_rdnchl_account_name,
+                        draccount: debtor.custrecord_rdnchl_account_number,
                         remarks: requestParams.parameters.custpage_memo
                     }
-                    const instructions = []
-                    for (let x = 0; x < lineCount; x++) {
-                        instructions.push({
-                            crbank: requestParams.getSublistValue({
-                                group: 'batch_transaction',
-                                name: 'custpage_bank',
-                                line: x
-                            }),
-                            crbankbranch: requestParams.getSublistValue({
-                                group: 'batch_transaction',
-                                name: 'custpage_branch',
-                                line: x
-                            }),
-                            craccountname: requestParams.getSublistValue({
-                                group: 'batch_transaction',
-                                name: 'custpage_ac_name',
-                                line: x
-                            }),
-                            craccount: requestParams.getSublistValue({
-                                group: 'batch_transaction',
-                                name: 'custpage_ac_number',
-                                line: x
-                            }),
-                            amount: requestParams.getSublistValue({
-                                group: 'batch_transaction',
-                                name: 'custpage_amount',
-                                line: x
-                            }),
-                            remarks: requestParams.getSublistValue({
-                                group: 'batch_transaction',
-                                name: 'custpage_linememo',
-                                line: x
-                            })
-                        })
-                    }
-                    params.instructions = instructions
+                    params.instructions = journalPayment.creditLines.map((creditLine, x) => ({
+                        crbank: JSON.parse(creditLine.custrecord_rdnchl_bank_prop).value,
+                        crbankbranch: JSON.parse(creditLine.custrecord_rdnchl_bank_branch_prop).value,
+                        craccountname: creditLine.custrecord_rdnchl_account_name,
+                        craccount: creditLine.custrecord_rdnchl_account_number,
+                        amount: creditLine.amount,
+                        remarks: requestParams.getSublistValue({
+                            group: 'batch_transaction',
+                            name: 'custpage_linememo',
+                            line: x
+                        }) || creditLine.linememo
+                    }))
                     const nchlTranRecord = rdmod.savenchltran({
                         relrecord: requestParams.parameters.custpage_relrecord,
                         params: params
                     })
                     if (nchlTranRecord) {
-                        let tranRecord = null
-                        if (requestParams.parameters.custpage_payment_type === 'CIPS') {
-                            const cipsResponse = rdmod.postcipsbatch(nchlTranRecord)
-                            log.debug('POSTCIPS_RESP', cipsResponse)
-                            tranRecord = rdmod.updaterelrecord({
-                                type: 'customrecord_nchl_transaction',
-                                id: nchlTranRecord,
-                                values: {custrecord_nchl_tran_response: cipsResponse.body}
-                            })
-                            log.debug('NCHL_TRAN_RECORD', `Record updated with response record id = ${tranRecord}`)
-                        } else if (requestParams.parameters.custpage_payment_type === 'IPS') {
-                            const ipsResponse = rdmod.postipsbatch(nchlTranRecord)
-                            log.debug('POSTIPS_RESP', ipsResponse)
-                            tranRecord = rdmod.updaterelrecord({
-                                type: 'customrecord_nchl_transaction',
-                                id: nchlTranRecord,
-                                values: {custrecord_nchl_tran_response: ipsResponse.body}
-                            })
-                            log.debug('NCHL_TRAN_RECORD', `Record updated with response record id = ${tranRecord}`)
+                        // post*batch returns a string when the request itself failed
+                        const nchlResponse = paymentType === 'CIPS'
+                            ? rdmod.postcipsbatch(nchlTranRecord)
+                            : rdmod.postipsbatch(nchlTranRecord)
+                        log.debug('POST_BATCH_RESP', nchlResponse)
+                        const responseText = typeof nchlResponse === 'string' ? nchlResponse : nchlResponse.body
+                        const tranRecord = rdmod.updaterelrecord({
+                            type: 'customrecord_nchl_transaction',
+                            id: nchlTranRecord,
+                            values: {custrecord_nchl_tran_response: responseText}
+                        })
+                        log.debug('NCHL_TRAN_RECORD', `Record updated with response record id = ${tranRecord}`)
+                        // Mark the journal (not the NCHL record) as paid, and only when NCHL confirmed every credit
+                        if (rdmod.gettranstatus(responseText).status === 'SUCCESS') {
+                            relRecProp.values = {custbody_rdnchl_paid_online: true}
+                            rdmod.updaterelrecord(relRecProp)
                         }
-
-                        if(tranRecord) {
-                            record.submitFields({
-                                type: 'customrecord_nchl_transaction',
-                                id: nchlTranRecord,
-                                values: {
-                                    custbody_rdnchl_paid_online: true
-                                }
-                            })
-                            redirect.toRecord({
-                                type: 'customrecord_nchl_transaction',
-                                id: tranRecord
-                            })
-                        }
+                        redirect.toRecord({
+                            type: 'customrecord_nchl_transaction',
+                            id: nchlTranRecord
+                        })
                     }
 
                     /*const response = rdmod.postcipsbatch('992')

@@ -2,7 +2,7 @@
  * @NApiVersion 2.1
  * @NScriptType Suitelet
  */
-define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', 'N/redirect'], function (serverWidget, record, rdmodu, search, config, redirect) {
+define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', 'N/redirect', 'N/ui/message'], function (serverWidget, record, rdmodu, search, config, redirect, message) {
     return {
         onRequest: context => {
             const form = serverWidget.createForm({title: 'Confirm Payment Detail'})
@@ -12,6 +12,20 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', '
                     type: context.request.parameters.recordtype,
                     id: context.request.parameters.recordid
                 })
+                const activeTran = rdmodu.getactivenchltran(context.request.parameters.recordid)
+                if (tranRecord.getValue('custbody_rdnchl_paid_online') || activeTran) {
+                    form.addPageInitMessage({
+                        message: message.create({
+                            type: message.Type.WARNING,
+                            title: 'Payment already submitted',
+                            message: activeTran
+                                ? `NCHL transaction ${activeTran.name} for this record is ${activeTran.status}. Check its status instead of paying again.`
+                                : 'This record is already marked as paid online.'
+                        })
+                    })
+                    context.response.writePage({pageObject: form})
+                    return
+                }
                 form.addField({
                     id: 'custpage_parentrecord',
                     label: 'parent record',
@@ -231,6 +245,15 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', '
                 form.addSubmitButton({label: 'Make Payment'})
             } else if (context.request.method === 'POST') {
                 const requestParams = context.request.parameters
+                // Re-check on submit: the form may have been opened twice or submitted twice
+                const activeTran = rdmodu.getactivenchltran(JSON.parse(requestParams.custpage_parentrecord).id)
+                if (activeTran) {
+                    redirect.toRecord({
+                        type: 'customrecord_nchl_transaction',
+                        id: activeTran.id
+                    })
+                    return
+                }
                 const params = {
                     paymenttype: requestParams.custpage_ptype,
                     amount: requestParams.custpage_amount,
@@ -276,27 +299,21 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', '
                         type: serverWidget.FieldType.INLINEHTML
                     })
 
-                    if(lodgeResponse.processconfirm) {
-                        const billConfirmResponse = rdmodu.processbill({
-                            nchltranrecid: nchlTranRecord,
-                            reqtype: 'confirm'
-                        })
-                        devhtmlfield.defaultValue = `<p>${JSON.stringify(billConfirmResponse)}</p>`
-                    }
-                    if (lodgeResponse.responseResult.responseCode === '000') {
-                        const billConfirmResponse = rdmodu.processbill({
-                            nchltranrecid: nchlTranRecord,
-                            reqtype: 'confirm'
-                        })
-                        if (billConfirmResponse.responseResult.responseCode === '000') {
-                            relRecProp.values = {custbody_rdnchl_paid_online: true}
-                            const parentRecord = rdmodu.updaterelrecord(relRecProp)
-                            const tranRecord = rdmodu.updaterelrecord({
-                                type: 'customrecord_nchl_transaction',
-                                id: nchlTranRecord,
-                                values: {custrecord_nchl_tran_response: JSON.stringify(billConfirmResponse)}
-                            })
-                        }
+                    const lodgeAccepted = lodgeResponse.processconfirm ||
+                        (lodgeResponse.responseResult && lodgeResponse.responseResult.responseCode === '000')
+                    // confirmbillpay.do must be called only once per lodged bill
+                    const billResponse = lodgeAccepted
+                        ? rdmodu.processbill({nchltranrecid: nchlTranRecord, reqtype: 'confirm'})
+                        : lodgeResponse
+                    devhtmlfield.defaultValue = `<p>${JSON.stringify(billResponse)}</p>`
+                    rdmodu.updaterelrecord({
+                        type: 'customrecord_nchl_transaction',
+                        id: nchlTranRecord,
+                        values: {custrecord_nchl_tran_response: JSON.stringify(billResponse)}
+                    })
+                    if (lodgeAccepted && billResponse.responseResult && billResponse.responseResult.responseCode === '000') {
+                        relRecProp.values = {custbody_rdnchl_paid_online: true}
+                        rdmodu.updaterelrecord(relRecProp)
                     }
                 } else if (nchlTranRecord) {
                     let response = {type: 'nothing', resp: null}
@@ -304,24 +321,26 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', '
                         const cipsResponse = rdmodu.postcipsbatch(nchlTranRecord)
                         response.type = 'CIPS'
                         response.resp = cipsResponse
-                        const respBody = JSON.parse(cipsResponse.body)
-                        if (respBody.cipsBatchResponse.responseCode === '000' && respBody.cipsTxnResponseList[0].creditStatus === '000') { //todo: check here later
-                            relRecProp.values = {custbody_rdnchl_paid_online: true}
-                            const parentRecord = rdmodu.updaterelrecord(relRecProp)
-                        }
-                        const tranRecord = rdmodu.updaterelrecord({
+                        // postcipsbatch returns a string when the request itself failed
+                        const responseText = typeof cipsResponse === 'string' ? cipsResponse : cipsResponse.body
+                        // Save the response first so it is never lost, even if NCHL rejected the batch
+                        rdmodu.updaterelrecord({
                             type: 'customrecord_nchl_transaction',
                             id: nchlTranRecord,
-                            values: {custrecord_nchl_tran_response: cipsResponse.body}
+                            values: {custrecord_nchl_tran_response: responseText}
                         })
+                        if (rdmodu.gettranstatus(responseText).status === 'SUCCESS') {
+                            relRecProp.values = {custbody_rdnchl_paid_online: true}
+                            rdmodu.updaterelrecord(relRecProp)
+                        }
                     } else if (params.paymenttype === 'IPS') {
                         const ipsResponse = rdmodu.postipsbatch(nchlTranRecord)
                         response.type = 'ISP'
                         response.resp = ipsResponse
-                        const tranRecord = rdmodu.updaterelrecord({
+                        rdmodu.updaterelrecord({
                             type: 'customrecord_nchl_transaction',
                             id: nchlTranRecord,
-                            values: {custrecord_nchl_tran_response: ipsResponse.body}
+                            values: {custrecord_nchl_tran_response: typeof ipsResponse === 'string' ? ipsResponse : ipsResponse.body}
                         })
                     }
                 }
