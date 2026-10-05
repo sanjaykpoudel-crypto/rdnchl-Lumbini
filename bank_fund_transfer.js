@@ -118,9 +118,9 @@ define(['N/ui/serverWidget', 'N/search', 'N/task'], function (serverWidget, sear
                     if (selectedTrans.length > 0) {
                         const scheduletask = task.create({
                             taskType: task.TaskType.SCHEDULED_SCRIPT,
-                            scriptId: 'customscript_process_payment_schedule',
-                            deploymentId: 'customdeploy_process_payment_schedule',
-                            params: {custscript_nchl_script_params: JSON.stringify({type: 'transfer', records: selectedTrans})}
+                            scriptId: 'customscript_lc_process_pmt_schedule',
+                            deploymentId: 'customdeploy_lc_process_pmt_schedule',
+                            params: {custscript_lc_nchl_script_params: JSON.stringify({type: 'transfer', records: selectedTrans})}
                         })
                         const taskId = scheduletask.submit()
                     }

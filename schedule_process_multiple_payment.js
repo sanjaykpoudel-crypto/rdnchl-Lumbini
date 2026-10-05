@@ -7,7 +7,7 @@ define(['N/runtime', 'N/record', './rdmodule'], function (runtime, record, rdmod
         execute: context => {
             const script = runtime.getCurrentScript()
             const paramsRaw = script.getParameter({
-                name: 'custscript_nchl_script_params'
+                name: 'custscript_lc_nchl_script_params'
             })
             const params = JSON.parse(paramsRaw)
             // accepts {type, records} (bank transfer) or a bare array of records (vendor payments)

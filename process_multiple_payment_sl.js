@@ -129,10 +129,10 @@ define(['N/ui/serverWidget', './mpmod', 'N/task', 'N/url'], function (serverWidg
                 if (paymentList.length > 0) {
                     const scheduletask = task.create({
                         taskType: task.TaskType.SCHEDULED_SCRIPT,
-                        scriptId: 'customscript_process_payment_schedule',
-                        deploymentId: 'customdeploy_process_payment_schedule',
+                        scriptId: 'customscript_lc_process_pmt_schedule',
+                        deploymentId: 'customdeploy_lc_process_pmt_schedule',
                         // script parameters are strings; the scheduled script expects {type, records}
-                        params: {custscript_nchl_script_params: JSON.stringify({type: 'payment', records: paymentList})}
+                        params: {custscript_lc_nchl_script_params: JSON.stringify({type: 'payment', records: paymentList})}
                     })
                     const taskId = scheduletask.submit()
                 }

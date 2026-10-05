@@ -1,0 +1,25 @@
+<suitelet scriptid="customscript_lc_payment_confirm_sl">
+  <description></description>
+  <isinactive>F</isinactive>
+  <name>LC Payment Detail Confirm Page</name>
+  <notifyadmins>F</notifyadmins>
+  <notifyemails></notifyemails>
+  <notifyowner>T</notifyowner>
+  <notifyuser>F</notifyuser>
+  <scriptfile>[/SuiteScripts/rdnchl/payment_confirm_page_sl.js]</scriptfile>
+  <scriptdeployments>
+    <scriptdeployment scriptid="customdeploy_lc_payment_confirm_sl">
+      <allemployees>F</allemployees>
+      <allpartners>F</allpartners>
+      <allroles>T</allroles>
+      <audslctrole>CUSTOMER_CENTER|EMPLOYEE_CENTER|NETSUITE_SUPPORT_CENTER__BASIC|NETSUITE_SUPPORT_CENTER|ONLINE_FORM_USER|PARTNER_CENTER|VENDOR_CENTER</audslctrole>
+      <eventtype></eventtype>
+      <isdeployed>T</isdeployed>
+      <isonline>F</isonline>
+      <loglevel>DEBUG</loglevel>
+      <runasrole>ADMINISTRATOR</runasrole>
+      <status>TESTING</status>
+      <title>Payment Detail Confirm Page</title>
+    </scriptdeployment>
+  </scriptdeployments>
+</suitelet>

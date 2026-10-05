@@ -91,8 +91,8 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                                  functionName: `reinitiatetran('${JSON.stringify(requestBody)}')`
                              })*/
                             const tranDetailLink = url.resolveScript({
-                                scriptId: 'customscript_get_nchl_tran_detail',
-                                deploymentId: 'customdeploy_get_nchl_tran_detail',
+                                scriptId: 'customscript_lc_get_nchl_tran_detail',
+                                deploymentId: 'customdeploy_lc_get_nchl_tran_detail',
                                 params: {
                                     rectype: context.newRecord.type,
                                     recid: context.newRecord.id

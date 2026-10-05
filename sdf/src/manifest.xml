@@ -1,0 +1,14 @@
+<manifest projecttype="ACCOUNTCUSTOMIZATION">
+  <projectname>rdnchl-deploy</projectname>
+  <frameworkversion>1.0</frameworkversion>
+  <dependencies>
+    <features>
+      <feature required="true">SERVERSIDESCRIPTING</feature>
+      <feature required="false">CRM</feature>
+    </features>
+    <objects>
+      <object>customrecord_rd_nchl_bank_detail</object>
+      <object>customrecord_nchl_transaction</object>
+    </objects>
+  </dependencies>
+</manifest>
