@@ -1,0 +1,360 @@
+================================================================================
+NETSUITE - NCHL (NPI / connectIPS) INTEGRATION
+FILE 1: OUTGOING PAYMENTS SETUP & STEP-BY-STEP EXECUTION GUIDE
+Folder: rdnchl Lumbini
+Generated on: 2026-10-05
+================================================================================
+
+TABLE OF CONTENTS
+1. Overview of Outgoing Payment Capabilities
+2. Outgoing Payment Scripts & Functional Roles
+3. NetSuite Data Structure (Records & Custom Fields Required)
+4. Outgoing Payment Flows (Vendor Payment, Bulk, Govt IRD/DOC)
+5. Step-by-Step Implementation Guide to Make All Scripts Work at Once
+6. Code Fixes Required Before Execution
+7. Testing & Operational Checklist
+
+================================================================================
+1. OVERVIEW OF OUTGOING PAYMENT CAPABILITIES
+================================================================================
+The outgoing payment subsystem allows NetSuite to electronically disburse funds
+directly from corporate bank accounts via NCHL / NPI / connectIPS gateways:
+
+A. Single Vendor Payments & Prepayments:
+   - Real-time CIPS (connectIPS instant settlement up to transaction limit).
+   - Non-real-time IPS (Batch clearing through NCHL clearing cycle).
+B. Government & Biller Payments:
+   - Inland Revenue Department (IRD): Tax payments with voucher validation.
+   - Department of Customs (DOC): Customs duty payments with automated NECAS
+     assessment retrieval.
+C. Bulk & Multi-Line Disbursements:
+   - Journal Entry line disbursements (multiple creditor beneficiaries from a
+     single funding debit account).
+   - Mass batch execution of multiple approved vendor payments via Scheduled Script.
+D. Outbound Bank Transfers:
+   - Disbursing funds from an originating bank account to another internal account.
+
+================================================================================
+2. OUTGOING PAYMENT SCRIPTS & FUNCTIONAL ROLES
+================================================================================
+
+1. Core Communication & Digital Signature:
+   - rdmodule.js:
+     Server-side module. Generates OAuth bearer token (/oauth/token), signs batch
+     payload with SHA-256 digital certificate, and dispatches POST requests to
+     /api/postcipsbatch, /api/postnchlipsbatch, and biller endpoints.
+   - npiconfig.js:
+     Stores gateway host, API user credentials, and certificate ID.
+   - configfile.js:
+     Controls postonapprove behavior and certificate linkage.
+
+2. Single Payment UI & Execution:
+   - payment_button_ues.js (User Event on Vendor Payment / Bill):
+     Adds "Pay Online" button when payment status is Approved (approvalstatus == '2')
+     and unpaid (!custbody_rdnchl_paid_online). In create/edit mode, filters and
+     populates creditor bank accounts.
+   - payment_client.js (Client Script on Vendor Payment):
+     Dynamically updates available bank accounts when toggling CIPS vs IPS.
+   - payment_confirm_page_sl.js (Suitelet: customscript_payment_detail_confirm_sl):
+     Renders debtor and creditor confirmation screen, computes instruction payloads,
+     executes NCHL batch API call, updates payment status, and saves transaction log.
+   - suitelet_client.js (Client Script):
+     Client handler on payment_confirm_page_sl.js to dynamically switch creditor bank.
+
+3. Bulk & Multi-Line Payments (Journal Entry & Bulk):
+   - bulk_pmt_button_ues.js (User Event):
+     In view mode, adds "Pay Online" button linking to bulk payment Suitelet.
+   - bulkpayment_confirm_page_sl.js (Suitelet: customscript_bulk_payment_page):
+     Extracts debit account (funding bank) and all credit lines (beneficiaries with
+     custcol_col_entity_bank), formats a multi-instruction batch, signs and posts to NCHL.
+   - journal_nchl_btn_ues.js (User Event on Journal Entry):
+     Adds "Online Payment" button when Journal Entry is approved.
+   - journal_process_payment_sl.js (Suitelet: customscript_nchl_process_jrnl_payment):
+     Suitelet entry point for Journal Entry disbursements.
+
+4. Mass Batch Queue Processing:
+   - process_multiple_payment_sl.js (Suitelet: customscript_process_multi_pmt):
+     Presents a sublist of approved, unpaid vendor payments and prepayments with
+     checkboxes for mass selection.
+   - mpmod.js (Custom Module):
+     Provides the saved search query to populate unpaid approved transactions.
+   - schedule_process_multiple_payment.js (Scheduled Script: customscript_process_payment_schedule):
+     Background engine that iterates over queued transactions, posts CIPS/IPS batches,
+     and marks each transaction as paid online.
+
+5. Government Tax & Customs (IRD & DOC):
+   - vendor_type_from_npi_ues.js (User Event on Vendor):
+     Classifies vendors as Government / IRD / DOC.
+   - ventypeclient.js (Client Script on Vendor):
+     Cascading UI selection for vendor categories.
+   - get_ird_detail_ues.js (User Event on Vendor Bill):
+     Renders DOC Customs Office dropdown and "DOC Detail" button for customs vendors.
+   - get_ird_detail_cs.js (Client Script on Vendor Bill):
+     Launches popup Suitelet to query DOC customs assessment details.
+   - get_doc_payment_detail_sl.js (Suitelet: customscript_get_npi_doc_detail):
+     Queries NPI NECAS API (/api/tp/necas/detail), returns tax amount, and updates Bill.
+
+================================================================================
+3. NETSUITE DATA STRUCTURE (RECORDS & CUSTOM FIELDS REQUIRED)
+================================================================================
+
+A. CUSTOM RECORDS:
+   1. customrecord_rd_nchl_bank_detail (Label: NCHL Bank Detail)
+      - custrecord_nchl_bank_entity        (List/Record -> Entity/Vendor)
+      - custrecord_nchl_bank_coa           (List/Record -> Account)
+      - custrecord_nchl_bank_type          (List or Free-Form Text: 'CIPS', 'IPS')
+      - custrecord_rdnchl_bank_prop        (Long Text: JSON {value: bankId, text: bankName})
+      - custrecord_rdnchl_bank_branch_prop (Long Text: JSON {value: branchId, text: branchName})
+      - custrecord_rdnchl_account_name     (Free-Form Text: Account holder name)
+      - custrecord_rdnchl_account_number   (Free-Form Text: Bank account number)
+      - custrecord_nchl_account_verified   (Checkbox: Live validation status)
+
+   2. customrecord_nchl_transaction (Label: NCHL Transaction)
+      - name                               (Free-Form Text: Generated Batch ID)
+      - custrecord_rd_ns_record_type       (Free-Form Text: NetSuite record type)
+      - custrecord_nchl_tran_rel_record    (Integer or Free-Form Text: NetSuite record ID)
+      - custrecord_nchl_tran_mode          (List/Text: '1' for CIPS, '2' for IPS)
+      - custrecord_nchl_tran_raw_detail    (Long Text: Initial JSON request parameters)
+      - custrecord_nchl_tran_batch         (Long Text: Formatted NCHL batch JSON)
+      - custrecord_nchl_tran_instruction   (Long Text: Instruction JSON array)
+      - custrecord_nchl_tran_response      (Long Text: Response JSON from NCHL)
+      - custrecord_is_real_time            (Checkbox)
+      - custrecord_show_pageinit_msg       (Checkbox)
+
+B. CUSTOM ENTITY FIELDS (Apply to Vendor):
+   - custentity_rec_vendor_type           (Long Text: Selected category JSON)
+   - custentity_rec_vendor_subtype        (Long Text: Selected subcategory JSON)
+   - custentity_rec_vendor_department     (Long Text: Selected department/app code JSON)
+   - custentity_entity_bank_detail        (List/Record -> customrecord_rd_nchl_bank_detail, Multi-Select)
+
+C. CUSTOM TRANSACTION BODY FIELDS:
+   (Applies to Vendor Payment, Vendor Bill, Journal Entry, Transfer)
+   - custbody_nchl_payment_type           (List/Select: '1' = Real-Time CIPS, '2' = Non-Real-Time IPS)
+   - custbody_rdnchl_bank                 (List/Record -> customrecord_rd_nchl_bank_detail)
+   - custbody_rdnchl_paid_online          (Checkbox: Marked TRUE upon payment clearance)
+   - custbody_ird_voucher_no              (Free-Form Text: IRD Voucher / Assessment Number)
+   - custbody_npi_request_body            (Long Text: DOC customs inquiry payload)
+   - custbody_doc_office                  (Long Text: Selected DOC Customs Office JSON)
+
+D. CUSTOM TRANSACTION COLUMN FIELDS (Applies to Journal Entry Lines):
+   - custcol_col_entity_bank              (List/Record -> customrecord_rd_nchl_bank_detail)
+
+E. CUSTOM ACCOUNT FIELDS (Applies to Chart of Accounts - Bank Accounts):
+   - custrecord_rdnchl_coa_bank_detail    (List/Record -> customrecord_rd_nchl_bank_detail for CIPS)
+   - custrecord_ips_bank                  (List/Record -> customrecord_rd_nchl_bank_detail for IPS)
+
+================================================================================
+4. OUTGOING PAYMENT FLOWS
+================================================================================
+
+FLOW A: STANDARD VENDOR PAYMENT (SINGLE)
+1. Vendor Bill is entered with approved vendor and bank account.
+2. Bill is paid via "Pay Bills" creating a Vendor Payment record.
+3. On Vendor Payment:
+   - User selects 'custbody_nchl_payment_type' (1 = CIPS Real-Time or 2 = IPS).
+   - User selects 'custbody_rdnchl_bank' (Vendor's bank account).
+4. When Vendor Payment is Approved (approvalstatus = '2'):
+   - payment_button_ues.js displays "Pay Online" button.
+5. Clicking "Pay Online" opens Suitelet: payment_confirm_page_sl.js.
+6. The user verifies Debtor Bank (from COA) and Creditor Bank (from Vendor Bank Detail).
+7. Clicking "Make Payment" triggers:
+   - rdmodule.savenchltran() -> creates customrecord_nchl_transaction.
+   - rdmodule.postcipsbatch() or postipsbatch() -> generates digital token and posts to NCHL.
+   - If response code is '000', sets custbody_rdnchl_paid_online = TRUE on Vendor Payment.
+   - Redirects user to customrecord_nchl_transaction record showing status.
+
+FLOW B: BULK JOURNAL DISBURSEMENTS
+1. User creates a Journal Entry where:
+   - Debit line = Bank Account (Funding Debtor Account).
+   - Multiple Credit lines = Beneficiary Payees, each having custcol_col_entity_bank selected.
+2. Journal Entry is Approved.
+3. bulk_pmt_button_ues.js displays "Pay Online" button.
+4. Clicking opens bulkpayment_confirm_page_sl.js.
+5. The Suitelet aggregates all credit lines into a single NCHL batch with multiple instructions.
+6. User clicks submit -> batch posted to NCHL -> custbody_rdnchl_paid_online set to TRUE.
+
+FLOW C: MASS VENDOR PAYMENT BATCH QUEUE
+1. User navigates to customscript_process_multi_pmt Suitelet.
+2. Suitelet displays all approved, unpaid Vendor Payments.
+3. User selects records via checkboxes and submits.
+4. Suitelet triggers Scheduled Script customscript_process_payment_schedule.
+5. Scheduled Script runs in background, processes payments, posts to NCHL, and marks records.
+
+FLOW D: GOVERNMENT TAX & CUSTOMS DUTY PAYMENTS (IRD & DOC)
+1. For IRD: Vendor Bill created with vendor type IRD, entering custbody_ird_voucher_no.
+2. For DOC (Customs): Vendor Bill created with vendor department 'DOC-FORM'.
+   - User clicks "DOC Detail" button -> opens get_doc_payment_detail_sl.js popup.
+   - User enters Registration No, Year, Serial -> NECAS API returns assessment amount.
+   - Form auto-populates tax amount and saves custbody_npi_request_body on the Bill.
+3. When the Bill is paid, payment_confirm_page_sl.js uses /api/billpayment/lodgebillpay.do
+   and confirmbillpay.do to complete government clearance.
+
+================================================================================
+5. STEP-BY-STEP IMPLEMENTATION GUIDE TO MAKE ALL SCRIPTS WORK AT ONCE
+================================================================================
+
+Follow these sequential steps in your NetSuite account:
+
+STEP 1: UPLOAD DIGITAL CERTIFICATE
+1. Obtain the client .pfx / .p12 certificate file and private key password from NCHL.
+2. In NetSuite, go to: Setup > Company > Certificates.
+3. Create New Certificate:
+   - Name: NPI Live Certificate
+   - Script ID: custcertificatenpilive (must match npiconfig.js CERTIFICATE_ID)
+   - Upload your certificate file and enter the password.
+
+STEP 2: CREATE FILE CABINET FOLDER & CONFIGURATION
+1. Go to Documents > Files > File Cabinet.
+2. Create a folder named: npiconfig (or note down its internal ID).
+3. Ensure npiconfig.js and configfile.js exist in your script folder.
+
+STEP 3: CREATE CUSTOM RECORDS & FIELDS
+1. Create Custom Record: customrecord_rd_nchl_bank_detail with all fields in Section 3.A.
+2. Create Custom Record: customrecord_nchl_transaction with all fields in Section 3.A.
+3. Create Custom Entity Fields (Vendor) listed in Section 3.B.
+4. Create Custom Transaction Body Fields listed in Section 3.C.
+5. Create Custom Transaction Column Field (custcol_col_entity_bank) listed in Section 3.D.
+6. Create Custom Account Fields listed in Section 3.E.
+
+STEP 4: SETUP CHART OF ACCOUNTS (BANK ACCOUNTS)
+1. For each bank account in NetSuite used for outgoing payments:
+   - Create a corresponding customrecord_rd_nchl_bank_detail record (with Bank Type CIPS and/or IPS).
+   - In the Account record, assign custrecord_rdnchl_coa_bank_detail and custrecord_ips_bank.
+
+STEP 5: SETUP VENDORS & VENDOR BANKS
+1. For each payee vendor:
+   - Create the vendor's bank account under customrecord_rd_nchl_bank_detail, linking it to the vendor.
+   - Verify the account number and name against NCHL.
+
+STEP 6: DEPLOY USER EVENT, CLIENT & SUITELET SCRIPTS
+Create Script Records and Deployments with the exact IDs:
+
+1. User Event on Vendor Payment & Vendor Bill:
+   - Script Name: RD NCHL Payment Button UES
+   - Script ID: customscript_payment_btn_ues
+   - Deployment ID: customdeploy_payment_btn_ues
+   - Script File: payment_button_ues.js
+   - Applies To: Vendor Payment, Vendor Bill (Event: View, Edit, Create)
+
+2. Client Script on Vendor Payment:
+   - Script Name: RD NCHL Payment Client
+   - Script ID: customscript_payment_client
+   - Deployment ID: customdeploy_payment_client
+   - Script File: payment_client.js
+   - Applies To: Vendor Payment
+
+3. Suitelet - Payment Confirmation Page:
+   - Script Name: RD NCHL Payment Detail Confirm SL
+   - Script ID: customscript_payment_detail_confirm_sl
+   - Deployment ID: customdeploy_payment_detail_confirm_sl
+   - Script File: payment_confirm_page_sl.js
+   - Status: Released, All Roles Allowed
+
+4. User Event on NCHL Transaction Record:
+   - Script Name: RD NCHL Tran Batch Gen UES
+   - Script ID: customscript_nchl_tran_batch_ues
+   - Deployment ID: customdeploy_nchl_tran_batch_ues
+   - Script File: nchl_tran_gen_set_batchid_ues.js
+   - Applies To: customrecord_nchl_transaction (Event: beforeLoad, afterSubmit)
+
+5. User Event on Bulk / Journal Payments:
+   - Script Name: RD NCHL Bulk Pmt Button UES
+   - Script ID: customscript_bulk_pmt_btn_ues
+   - Deployment ID: customdeploy_bulk_pmt_btn_ues
+   - Script File: bulk_pmt_button_ues.js
+   - Applies To: Journal Entry (or custom bulk payment record)
+
+6. Suitelet - Bulk Payment Confirmation:
+   - Script Name: RD NCHL Bulk Payment Page SL
+   - Script ID: customscript_bulk_payment_page
+   - Deployment ID: customdeploy_bulk_payment_page
+   - Script File: bulkpayment_confirm_page_sl.js
+   - Status: Released
+
+7. User Event on Journal Entry:
+   - Script Name: RD NCHL Journal Button UES
+   - Script ID: customscript_journal_nchl_btn_ues
+   - Deployment ID: customdeploy_journal_nchl_btn_ues
+   - Script File: journal_nchl_btn_ues.js
+   - Applies To: Journal Entry
+
+8. Suitelet - Mass Vendor Payment Selection:
+   - Script Name: RD NCHL Process Multi Payment SL
+   - Script ID: customscript_process_multi_pmt
+   - Deployment ID: customdeploy_process_multi_pmt
+   - Script File: process_multiple_payment_sl.js
+   - Status: Released (Add to Center Menu)
+
+9. Scheduled Script - Multi Payment Background Processor:
+   - Script Name: RD NCHL Process Payment Schedule
+   - Script ID: customscript_process_payment_schedule
+   - Deployment ID: customdeploy_process_payment_schedule
+   - Script File: schedule_process_multiple_payment.js
+   - Script Parameter:
+     * ID: custscript_nchl_script_params
+     * Type: Long Text / Free-Form Text
+
+10. User Event on Vendor:
+    - Script File: vendor_type_from_npi_ues.js
+    - Applies To: Vendor
+
+11. User Event on Account:
+    - Script File: attach_coa_bank_detail_ues.js
+    - Applies To: Account
+
+12. User Event on Vendor Bill (DOC Customs):
+    - Script File: get_ird_detail_ues.js
+    - Applies To: Vendor Bill
+
+13. Suitelet - DOC Detail Popup:
+    - Script ID: customscript_get_npi_doc_detail
+    - Deployment ID: customdeploy_get_npi_doc_detail
+    - Script File: get_doc_payment_detail_sl.js
+    - Status: Released
+
+================================================================================
+6. CODE FIXES REQUIRED BEFORE EXECUTION
+================================================================================
+
+1. Fix Undeclared Variable in schedule_process_multiple_payment.js (Line 72):
+   - Current Code:
+     relRecProp.values = {custbody_rdnchl_paid_online: true}
+     const parentRecord = rdmodu.updaterelrecord(relRecProp)
+   - Issue: relRecProp is undefined and will throw a fatal ReferenceError.
+   - Solution:
+     Replace Line 72 with:
+     const relRecProp = {
+         type: pr.recordtype,
+         id: pr.recordid,
+         values: { custbody_rdnchl_paid_online: true }
+     };
+     const parentRecord = rdmodu.updaterelrecord(relRecProp);
+
+2. Complete journal_process_payment_sl.js:
+   - Current Code: Only prints typeof lineCount to a temporary HTML field.
+   - Solution: Direct the "Online Payment" button in journal_nchl_btn_ues.js to
+     use customscript_bulk_payment_page (bulkpayment_confirm_page_sl.js) which is
+     already fully implemented for multi-line transactions.
+
+3. Fix Hardcoded Folder ID in write_config_ues.js (Line 22):
+   - Change 'folder: 398' to match the actual folder internal ID in your NetSuite account.
+
+4. Remove Developer Email Check in nchl_tran_gen_set_batchid_ues.js (Line 48):
+   - Remove 'devUser.email === "muskanworkemail@gmail.com"'.
+
+================================================================================
+7. TESTING & OPERATIONAL CHECKLIST
+================================================================================
+1. Connectivity Test:
+   - Run ns_http_module_test.js Suitelet to verify that an OAuth bearer token is
+     successfully generated from NPI.
+2. Single Payment Test:
+   - Create a test Vendor Bill and make a test Vendor Payment.
+   - Verify that "Pay Online" button appears when approved.
+   - Click "Pay Online", verify Debtor & Creditor bank details on the confirmation page.
+   - Submit and verify that the payment is logged in customrecord_nchl_transaction
+     with response code '000' and custbody_rdnchl_paid_online is checked.
+3. Batch & Bulk Payment Test:
+   - Test a multi-line Journal Entry and mass payments via process_multiple_payment_sl.js.
+   - Verify that Scheduled Script completes without errors.
+================================================================================

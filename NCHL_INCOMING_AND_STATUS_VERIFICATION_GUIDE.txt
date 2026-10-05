@@ -1,0 +1,305 @@
+================================================================================
+NETSUITE - NCHL (NPI / connectIPS) INTEGRATION
+FILE 2: INCOMING TRANSFERS, BANK VERIFICATION & STATUS CLEARANCE GUIDE
+Folder: rdnchl Lumbini
+Generated on: 2026-10-05
+================================================================================
+
+TABLE OF CONTENTS
+1. Overview of Inward Flows, Verification & Settlement Tracking
+2. Scripts Involved in Inward Transfers, Verification & Reconciliation
+3. NetSuite Records & Field Mapping for Inward & Status Tracking
+4. Real-Time Account Validation Flow (/api/validatebankaccount)
+5. Inward Bank Fund Transfer Execution Flow
+6. Live Transaction Status Clearance & Polling Architecture
+7. NCHL Response Code Dictionary & Error Handling
+8. Step-by-Step Implementation Guide to Make All Scripts Work at Once
+9. Operational Runbook & Verification Checklist
+
+================================================================================
+1. OVERVIEW OF INWARD FLOWS, VERIFICATION & SETTLEMENT TRACKING
+================================================================================
+This subsystem handles the verification, inbound routing, and clearance confirmation
+of banking operations between NetSuite and NCHL:
+
+A. Real-Time Bank Account Validation:
+   - Before executing any payment or receiving funds, verifies account holder name,
+     account number, and branch match percentage directly against member banks
+     via NCHL API (/api/validatebankaccount).
+   - Enforces a 100% name match requirement before marking accounts as verified.
+B. Internal Bank Fund Transfers (Inflow & Outflow):
+   - Handles NetSuite Bank Transfer transactions where funds are debited from an
+     originating account and credited into a receiving destination account (inward flow).
+C. Asynchronous Clearing & Status Polling:
+   - Non-real-time IPS payments and queued CIPS payments often enter an 'IN-PROGRESS'
+     (e.g., 'ENTR' - Entered) state during banking clearing windows.
+   - Provides on-demand live polling Suitelets to query NCHL clearing servers
+     (/api/getnchlipstxnlistbybatchid & /api/getcipstxnlistbybatchid) to obtain
+     final settlement confirmation.
+D. Transaction Logging & Audit Trails:
+   - Maintains an immutable log on 'customrecord_nchl_transaction' with full batch
+     payloads, individual instruction clearing codes, and response timestamps.
+
+================================================================================
+2. SCRIPTS INVOLVED IN INWARD TRANSFERS, VERIFICATION & RECONCILIATION
+================================================================================
+
+1. Live Account Verification Engine:
+   - nchl_bank_detail_cs.js (Client Script):
+     Deployed on 'customrecord_rd_nchl_bank_detail'.
+     Monitors user entry of Bank, Branch, Account Name, and Account Number.
+     Calls rdmodc.verifiaccount() on saveRecord.
+     If matchPercentate == 100, sets 'custrecord_nchl_account_verified' = TRUE.
+   - rdmoduleclient.js (Client-side Module):
+     Sends client-side HTTP request to NPI endpoint /api/validatebankaccount with
+     bankId, accountId, and accountName.
+   - nchl_bank_detail_ues.js (User Event):
+     Controls UI display of verified status, disables manual record naming, and
+     formats standardized record titles.
+
+2. Inward Bank Fund Transfers:
+   - bank_fund_transfer.js (Suitelet):
+     Searches all NetSuite 'transfer' transactions.
+     Identifies From Account (facct, amount < 0) and To Account (tacct, amount > 0).
+     Renders a sublist allowing finance officers to review and select fund transfers.
+     On POST, queues transfers into Scheduled Script customscript_process_payment_schedule.
+   - schedule_process_multiple_payment.js (Scheduled Script):
+     Iterates through queued transfer records, looks up debtor bank details
+     (fromaccount) and creditor bank details (toaccount), packages CIPS/IPS batches,
+     and submits them to NCHL.
+
+3. Live Status Polling & Clearing Verification:
+   - nchl_tran_gen_set_batchid_ues.js (User Event on customrecord_nchl_transaction):
+     * beforeLoad: Evaluates saved API response JSON.
+     * If status is 'IN-PROGRESS' (or contains 'ENTR'), displays a prominent
+       Information banner and injects a "Status" button.
+     * Clicking "Status" launches get_transaction_detail_sl.js.
+   - get_transaction_detail_sl.js (Suitelet: customscript_get_nchl_tran_detail):
+     Loads the transaction record, calls rdmod.getipstrandetail(), queries NCHL
+     API /api/getnchlipstxnlistbybatchid, and renders a live sublist of every
+     instruction showing Creditor Name, Creditor Account, Amount, and live Credit Status.
+   - nchl_tran_client.js (Client Script):
+     Contains client-side polling helper functions (gettranstatus) calling
+     /api/getcipstxnlistbybatchid for instant status popups.
+   - rdmodule.js (Server Module):
+     Implements getipstrandetail() to fetch current batch instruction clearing status.
+
+================================================================================
+3. NETSUITE RECORDS & FIELD MAPPING FOR INWARD & STATUS TRACKING
+================================================================================
+
+A. Bank Detail Record: customrecord_rd_nchl_bank_detail
+   - custrecord_nchl_account_verified (Checkbox):
+     Indicates whether NCHL has confirmed that the account number and name match.
+   - custrecord_nchl_bank_coa (List/Record -> Account):
+     Links the NCHL bank definition to the receiving or sending NetSuite GL account.
+   - custrecord_rdnchl_account_name (Free-Form Text): Verified account holder name.
+   - custrecord_rdnchl_account_number (Free-Form Text): Verified bank account number.
+
+B. Transaction Log Record: customrecord_nchl_transaction
+   - name: Batch ID (PMT-[ParentID]-TRAN-[RecordID]).
+   - custrecord_rd_ns_record_type: Originating transaction type ('transfer', 'vendorpayment', etc.).
+   - custrecord_nchl_tran_rel_record: Internal ID of the originating NetSuite record.
+   - custrecord_nchl_tran_mode: Mode ('1' = CIPS Real-time, '2' = IPS Non-real-time).
+   - custrecord_nchl_tran_batch: JSON payload of the batch header.
+   - custrecord_nchl_tran_instruction: JSON payload of individual credit instructions.
+   - custrecord_nchl_tran_response: Full JSON response from NCHL gateway.
+   - custrecord_is_real_time: Checkbox indicating real-time settlement.
+   - custrecord_show_pageinit_msg: Checkbox to control banner display on load.
+
+C. NetSuite Bank Transfer Fields:
+   - account / fromaccount: Originating funding bank account.
+   - toaccount: Receiving destination bank account.
+   - custbody_nchl_payment_type: Mode (1 = CIPS Real-time, 2 = IPS).
+   - custbody_rdnchl_paid_online: Checked TRUE when transfer successfully clears.
+
+================================================================================
+4. REAL-TIME ACCOUNT VALIDATION FLOW (/api/validatebankaccount)
+================================================================================
+
+1. User creates or edits a customrecord_rd_nchl_bank_detail record.
+2. User selects:
+   - Bank Type (CIPS or IPS).
+   - Bank Name (populated from /api/getbanklist).
+   - Branch Name (populated from /api/getbranchlist/{bankId}).
+   - Enters Account Name and Account Number.
+3. On clicking "Save", nchl_bank_detail_cs.js intercepts the saveRecord event:
+   - Checks if custrecord_nchl_account_verified is already true.
+   - If false, executes rdmodc.verifiaccount():
+     POST npiconf.HOST + '/api/validatebankaccount'
+     Payload: { bankId: bankId, accountId: accountNumber, accountName: accountName }
+4. NCHL validates the account against the designated core banking system and returns:
+   { matchPercentate: 100, branchId: '...', ... }
+5. If matchPercentate === 100:
+   - custrecord_nchl_account_verified is automatically set to TRUE.
+   - Record saves successfully.
+6. If matchPercentate < 100 or account invalid:
+   - Save is blocked, displaying an alert with the discrepancy reason.
+
+================================================================================
+5. INWARD BANK FUND TRANSFER EXECUTION FLOW
+================================================================================
+
+1. In NetSuite, user creates a standard Bank Transfer transaction (Transactions > Bank > Transfer Funds):
+   - From Account: Operating Bank Account (originating fund).
+   - To Account: Receiving Bank Account (inward fund destination).
+   - Amount & Date specified.
+2. User navigates to the Bank Fund Transfer Suitelet (bank_fund_transfer.js):
+   - Suitelet executes a search for all transfer records.
+   - Renders a sublist showing Date, Transaction Number, From Account, To Account, Amount.
+3. User selects one or more transfers via checkboxes and clicks "Continue".
+4. Suitelet passes selected transfer IDs to Scheduled Script:
+   customscript_process_payment_schedule.
+5. Scheduled Script runs in background:
+   - Loads the transfer transaction.
+   - Resolves debtor bank details from From Account.
+   - Resolves creditor bank details from To Account.
+   - Generates unique Batch ID: PMT-[TransferID]-TRAN-[NCHLTranID].
+   - Posts CIPS or IPS batch to NCHL.
+   - Upon confirmation ('000'), updates customrecord_nchl_transaction with API response
+     and sets custbody_rdnchl_paid_online = true on the Transfer.
+
+================================================================================
+6. LIVE TRANSACTION STATUS CLEARANCE & POLLING ARCHITECTURE
+================================================================================
+
+When a batch is posted in IPS mode or queued during high-volume periods, NCHL
+returns an initial response code indicating the batch has been accepted for clearing
+('ENTR' / In-Progress).
+
+HOW TO CHECK & RECONCILE SETTLEMENT STATUS:
+1. Open the customrecord_nchl_transaction record.
+2. nchl_tran_gen_set_batchid_ues.js checks the response code:
+   - If response has not finalized, an "In Progress" banner appears at the top.
+   - A button titled "Status" appears in the form header.
+3. Clicking "Status" opens get_transaction_detail_sl.js in a new window:
+   - The Suitelet queries NCHL gateway:
+     POST /api/getnchlipstxnlistbybatchid with { batchId: batchId }
+   - Parses responseBody.nchlIpsTransactionDetailList.
+   - Renders a detailed sublist showing:
+     * Account Name
+     * Account Number
+     * Amount
+     * Status (e.g. '000' for Cleared/Credited, or error code)
+4. Reconciliation:
+   - When all line items display '000', settlement is confirmed.
+   - The originating payment or transfer record in NetSuite can be reconciled
+     against the monthly bank statement.
+
+================================================================================
+7. NCHL RESPONSE CODE DICTIONARY & ERROR HANDLING
+================================================================================
+
+Standard NCHL / NPI Response Codes:
+- '000' : SUCCESS / CREDITED - Transaction successfully debited from funding account
+          and credited to beneficiary account.
+- 'ENTR': ENTERED / IN-PROGRESS - Batch accepted into clearing house queue;
+          awaiting bank clearing window.
+- '999' : SYSTEM ERROR - Unexpected gateway failure or bank timeout.
+- '001' : INSUFFICIENT FUNDS - Originating debtor account lacks required balance.
+- '002' : INVALID ACCOUNT - Creditor account number does not exist or is inactive.
+- '003' : LIMIT EXCEEDED - Transaction amount exceeds per-transaction or daily limit.
+- '004' : SIGNATURE FAILED - Digital signature mismatch (check NetSuite certificate).
+- '005' : DUPLICATE BATCH ID - Batch ID has already been processed by NCHL.
+
+Error Handling Protocol:
+- If response is 'FAILED': Error banner on the transaction record displays the
+  exact NCHL error message. The payment is NOT marked as paid.
+- If response is 'IN-PROGRESS': Finance users must use the "Status" button to
+  monitor until final clearance is achieved. Do not re-submit to prevent double debits.
+
+================================================================================
+8. STEP-BY-STEP IMPLEMENTATION GUIDE TO MAKE ALL SCRIPTS WORK AT ONCE
+================================================================================
+
+Follow these sequential steps to configure and activate the incoming, verification,
+and status scripts:
+
+STEP 1: CONFIGURE CLIENT SCRIPTS ON BANK DETAIL RECORD
+1. Go to Customization > Scripting > Scripts > New.
+2. Select nchl_bank_detail_cs.js.
+3. Create Script Record:
+   - Name: RD NCHL Bank Detail CS
+   - ID: customscript_nchl_bank_detail_cs
+4. Associate with 'customrecord_rd_nchl_bank_detail' record form under Custom Code.
+
+STEP 2: CONFIGURE USER EVENT ON BANK DETAIL RECORD
+1. Create Script Record from nchl_bank_detail_ues.js:
+   - Name: RD NCHL Bank Detail UES
+   - ID: customscript_nchl_bank_detail_ues
+2. Create Deployment:
+   - ID: customdeploy_nchl_bank_detail_ues
+   - Applies To: customrecord_rd_nchl_bank_detail
+   - Events: beforeLoad, beforeSubmit
+   - Status: Released
+
+STEP 3: CONFIGURE ACCOUNT COA LINKAGE USER EVENT
+1. Create Script Record from attach_coa_bank_detail_ues.js:
+   - Name: RD NCHL Attach COA Bank UES
+   - ID: customscript_attach_coa_bank_ues
+2. Create Deployment:
+   - ID: customdeploy_attach_coa_bank_ues
+   - Applies To: Account
+   - Event: afterSubmit
+   - Status: Released
+
+STEP 4: CONFIGURE NCHL TRANSACTION LOG USER EVENT & STATUS BUTTON
+1. Create Script Record from nchl_tran_gen_set_batchid_ues.js:
+   - Name: RD NCHL Tran Batch Gen UES
+   - ID: customscript_nchl_tran_batch_ues
+2. Create Deployment:
+   - ID: customdeploy_nchl_tran_batch_ues
+   - Applies To: customrecord_nchl_transaction
+   - Events: beforeLoad, afterSubmit
+   - Status: Released
+
+STEP 5: CONFIGURE LIVE STATUS LOOKUP SUITELET
+1. Create Script Record from get_transaction_detail_sl.js:
+   - Name: RD NCHL Get Tran Detail SL
+   - Script ID: customscript_get_nchl_tran_detail
+2. Create Deployment:
+   - Deployment ID: customdeploy_get_nchl_tran_detail
+   - Status: Released
+   - All Roles: Checked
+
+STEP 6: CONFIGURE BANK FUND TRANSFER SUITELET
+1. Create Script Record from bank_fund_transfer.js:
+   - Name: RD NCHL Bank Fund Transfer SL
+   - Script ID: customscript_bank_fund_transfer
+2. Create Deployment:
+   - Deployment ID: customdeploy_bank_fund_transfer
+   - Status: Released
+   - Links: Add to Center Navigation under Transactions > Bank > NCHL Fund Transfer
+
+STEP 7: CONFIGURE BACKGROUND PROCESSOR SCHEDULED SCRIPT
+1. Create Script Record from schedule_process_multiple_payment.js:
+   - Name: RD NCHL Process Payment Schedule
+   - Script ID: customscript_process_payment_schedule
+2. Create Script Parameter:
+   - Label: Script Parameters
+   - ID: custscript_nchl_script_params
+   - Type: Long Text
+3. Create Deployment:
+   - Deployment ID: customdeploy_process_payment_schedule
+   - Status: Queued / Released (Invoked on-demand by Suitelets)
+
+================================================================================
+9. OPERATIONAL RUNBOOK & VERIFICATION CHECKLIST
+================================================================================
+
+VERIFICATION RUNBOOK:
+1. Test Bank Account Verification:
+   - Open any vendor or COA bank detail record.
+   - Enter bank, branch, account number, and holder name.
+   - Save the record. Verify that the client script contacts NCHL and marks
+     'custrecord_nchl_account_verified' as checked.
+2. Test Bank Fund Transfer:
+   - Enter a standard Bank Transfer between two verified accounts in NetSuite.
+   - Open the Bank Fund Transfer Suitelet.
+   - Select the transfer and click "Continue".
+   - Verify that Scheduled Script triggers and generates an NCHL transaction log.
+3. Test Live Status Clearance:
+   - Locate an NCHL Transaction record with status 'IN-PROGRESS'.
+   - Click the "Status" button in the form header.
+   - Confirm that the popup sublist loads with live clearance data directly from NCHL.
+================================================================================
