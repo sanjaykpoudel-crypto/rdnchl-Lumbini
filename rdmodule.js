@@ -559,7 +559,9 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                     const batchSuccess = resp.cipsBatchResponse.responseCode === '000'
                     const allCreditsSuccess = lines.length > 0 && lines.every(line =>
                         line.responseCode === '000' && (line.creditStatus === undefined || line.creditStatus === '000'))
-                    const inProgress = lines.some(line => line.responseCode === 'ENTR' || line.creditStatus === 'ENTR')
+                    // ENTR = queued; 999 = NCHL timed out after the debit ("CONFIRM WITH BANK BEFORE RE-POSTING")
+                    const pendingCodes = ['ENTR', '999']
+                    const inProgress = lines.some(line => pendingCodes.includes(line.responseCode) || pendingCodes.includes(line.creditStatus))
                     if (batchSuccess && allCreditsSuccess) {
                         result.status = 'SUCCESS'
                     } else if (inProgress) {
