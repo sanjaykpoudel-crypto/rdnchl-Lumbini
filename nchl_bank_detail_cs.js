@@ -84,14 +84,15 @@ define(['./rdmoduleclient', 'N/ui/message'], function (rdmodc, message) {
                 })
                 console.log('VERIFICATION_RESPONSE', verification)
                 if (verification.matchPercentate === 100) {
-                    context.currentRecord.setValue({
-                        fieldId: 'custrecord_nchl_account_verified',
-                        value: true
-                    })
                   context.currentRecord.setValue({
                     fieldId: 'custpage_nchl_bank_branch',
                     value: verification.branchId
                   })
+                    // set last: changing any other field in fieldChanged clears the verified flag
+                    context.currentRecord.setValue({
+                        fieldId: 'custrecord_nchl_account_verified',
+                        value: true
+                    })
                   /*context.currentRecord.setValue({
                     fieldId: 'custrecord_rdnchl_bank_branch_prop',
                     value: JSON.stringify({
