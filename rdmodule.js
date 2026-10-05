@@ -534,6 +534,87 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 return response
             },
             /**
+             * Asks NCHL for the settlement status of an IPS (non real time) transaction, saves it on the
+             * NCHL transaction record and marks the related record paid once every credit is settled.
+             * Only a failed debit counts as FAILED; any other unsettled credit stays IN-PROGRESS so a
+             * second payment remains blocked until someone checks with the bank.
+             * @param {string|number} nchltranid
+             * @param {string} [token] NPI access token to reuse
+             * @returns {{status: string, message: string, detail: Object}|null} null when not an IPS transaction
+             */
+            refreshipsstatus: function (nchltranid, token) {
+                const tran = search.lookupFields({
+                    type: 'customrecord_nchl_transaction',
+                    id: nchltranid,
+                    columns: ['custrecord_nchl_tran_mode', 'custrecord_nchl_tran_batch', 'custrecord_nchl_tran_response',
+                        'custrecord_nchl_tran_rel_record', 'custrecord_rd_ns_record_type']
+                })
+                const mode = tran.custrecord_nchl_tran_mode.length ? tran.custrecord_nchl_tran_mode[0].value : ''
+                if (mode !== '2') {
+                    return null
+                }
+                const batch = JSON.parse(tran.custrecord_nchl_tran_batch || '{}')
+                const response = this.getipstrandetail({batchid: batch.batchId, token: token})
+                if (response.code !== 200) {
+                    throw error.create({
+                        name: 'NCHL_IPS_STATUS_ERROR',
+                        message: 'NCHL status request for ' + batch.batchId + ' failed with HTTP ' + response.code + ': ' + response.body
+                    })
+                }
+                const detail = JSON.parse(response.body)
+                const lines = detail.nchlIpsTransactionDetailList || []
+                const debitFailed = !!detail.debitStatus && detail.debitStatus !== '000'
+                if (!debitFailed && lines.length === 0) {
+                    return {status: this.gettranstatus(tran.custrecord_nchl_tran_response).status, message: 'NCHL returned no transactions yet', detail: detail}
+                }
+                let previous = {}
+                try {
+                    previous = JSON.parse(tran.custrecord_nchl_tran_response || '{}')
+                } catch (e) {
+                    previous = {}
+                }
+                // stored in the same shape as a CIPS response so gettranstatus and the record view understand it
+                const normalized = {
+                    cipsBatchResponse: {
+                        responseCode: debitFailed ? detail.debitStatus : '000',
+                        responseMessage: detail.debitReasonDesc,
+                        batchId: detail.batchId,
+                        debitStatus: detail.debitStatus
+                    },
+                    cipsTxnResponseList: lines.map(line => {
+                        // NCHL reports progress with ISO 20022 codes (SENT, ACTC, ...); 000 / ACSC = settlement completed
+                        const settled = line.creditStatus === '000' || line.creditStatus === 'ACSC'
+                        const reason = line.reasonDesc || line.reasonCode
+                        return {
+                            responseCode: debitFailed ? detail.debitStatus : (settled ? '000' : 'ENTR'),
+                            creditStatus: settled ? '000' : line.creditStatus,
+                            nchlCreditStatus: line.creditStatus,
+                            instructionId: line.instructionId,
+                            responseMessage: settled ? 'SETTLED' : 'NCHL IPS credit status ' + line.creditStatus +
+                                (reason ? ': ' + reason : '') + (line.reversalStatus ? ' (reversal ' + line.reversalStatus + ')' : '')
+                        }
+                    }),
+                    ipsStatusCheck: {checkedAt: new Date().toISOString(), settlementDate: detail.settlementDate},
+                    originalResponse: previous.originalResponse || tran.custrecord_nchl_tran_response
+                }
+                const responseText = JSON.stringify(normalized)
+                record.submitFields({
+                    type: 'customrecord_nchl_transaction',
+                    id: nchltranid,
+                    values: {custrecord_nchl_tran_response: responseText}
+                })
+                const tranStatus = this.gettranstatus(responseText)
+                if (tranStatus.status === 'SUCCESS' && tran.custrecord_nchl_tran_rel_record.length) {
+                    record.submitFields({
+                        type: tran.custrecord_rd_ns_record_type,
+                        id: tran.custrecord_nchl_tran_rel_record[0].value,
+                        values: {custbody_rdnchl_paid_online: true}
+                    })
+                }
+                log.audit('IPS_STATUS_REFRESHED', {nchltran: nchltranid, batchId: batch.batchId, status: tranStatus.status})
+                return {status: tranStatus.status, message: tranStatus.message, detail: detail}
+            },
+            /**
              * Classifies a saved NCHL response (custrecord_nchl_tran_response)
              * @param {string} responseText
              * @returns {{status: string, message: string, lineMessages: string[]}} status is SUCCESS, FAILED, IN-PROGRESS or UNKNOWN

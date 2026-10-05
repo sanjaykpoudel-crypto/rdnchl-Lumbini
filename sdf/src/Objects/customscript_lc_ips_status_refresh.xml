@@ -1,0 +1,12 @@
+<scheduledscript scriptid="customscript_lc_ips_status_refresh">
+  <description>Checks unsettled NCHL IPS (non real time) payments with NCHL and saves the result. Marks payments paid once settled.</description>
+  <isinactive>F</isinactive>
+  <name>LC NCHL IPS Status Refresh</name>
+  <notifyadmins>F</notifyadmins>
+  <notifyemails></notifyemails>
+  <notifyowner>T</notifyowner>
+  <scriptfile>[/SuiteScripts/rdnchl/ips_status_refresh_ss.js]</scriptfile>
+  <!-- The deployment customdeploy_lc_ips_status_refresh (Scheduled, every hour from 6:00 am) is maintained in
+       the NetSuite UI and deliberately left out of this file: SDF cannot express the schedule in this account's
+       time zone (UTC+5:45), and including the deployment here would reset it to Not Scheduled on every deploy. -->
+</scheduledscript>

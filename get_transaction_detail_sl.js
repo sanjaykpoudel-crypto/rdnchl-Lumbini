@@ -2,7 +2,7 @@
  * @NApiVersion 2.1
  * @NScriptType Suitelet
  */
-define(['N/ui/serverWidget', 'N/record', './rdmodule'], function (serverWidget, record, rdmod) {
+define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message'], function (serverWidget, record, rdmod, message) {
     return {
         onRequest: context => {
             const form = serverWidget.createForm({title: 'NCHL Transaction Detail'})
@@ -12,9 +12,19 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule'], function (serverWidget, 
                 id: context.request.parameters.recid
             })
             const batch = JSON.parse(tranRec.getValue('custrecord_nchl_tran_batch'))
-            // const instructions = tranRec.getValue('custrecord_nchl_tran_instruction')
-            // const tranResp = JSON.parse(tranRec.getValue('custrecord_nchl_tran_response'))
-            const detailResponse = rdmod.getipstrandetail({batchid: batch.batchId, token: context.request.parameters.token})
+            // IPS: query NCHL and save the result on the NCHL transaction (and mark the payment paid once settled)
+            const refreshed = rdmod.refreshipsstatus(context.request.parameters.recid, context.request.parameters.token)
+            if (refreshed) {
+                form.addPageInitMessage({
+                    message: message.create({
+                        type: refreshed.status === 'SUCCESS' ? message.Type.CONFIRMATION
+                            : refreshed.status === 'FAILED' ? message.Type.ERROR : message.Type.INFORMATION,
+                        title: refreshed.status,
+                        message: refreshed.message || ''
+                    })
+                })
+            }
+            const detailResponse = refreshed ? null : rdmod.getipstrandetail({batchid: batch.batchId, token: context.request.parameters.token})
 
             const instructionSublist = form.addSublist({
                 id: 'instructions',
@@ -41,8 +51,8 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule'], function (serverWidget, 
                 label: 'Status',
                 type: serverWidget.FieldType.TEXT
             })
-            const responseBody = JSON.parse(detailResponse.body)
-            responseBody.nchlIpsTransactionDetailList.forEach((inst, line) => {
+            const responseBody = refreshed ? refreshed.detail : JSON.parse(detailResponse.body)
+            (responseBody.nchlIpsTransactionDetailList || []).forEach((inst, line) => {
                 instructionSublist.setSublistValue({
                     id: 'custpage_ac_name',
                     value: inst.creditorName,
