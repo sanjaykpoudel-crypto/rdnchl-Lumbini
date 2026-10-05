@@ -1,0 +1,473 @@
+================================================================================
+NETSUITE - NCHL (NPI / connectIPS) INTEGRATION
+AFFECTED NETSUITE RECORDS SPECIFICATION & DATA DICTIONARY
+Folder: rdnchl Lumbini
+Generated on: 2026-10-05
+================================================================================
+
+TABLE OF CONTENTS
+1. Executive Summary & Affected Records Count
+2. Master Table of All 12 Affected Records
+3. Comprehensive Deep-Dive by Record
+   - 3.1. Vendor Payment (vendorpayment)
+   - 3.2. Vendor Bill (vendorbill)
+   - 3.3. Vendor Prepayment (vendorprepayment)
+   - 3.4. Journal Entry (journalentry)
+   - 3.5. Transfer / Bank Fund Transfer (transfer)
+   - 3.6. Vendor Master Record (vendor)
+   - 3.7. Account / Chart of Accounts (account)
+   - 3.8. NCHL Bank Detail Custom Record (customrecord_rd_nchl_bank_detail)
+   - 3.9. NCHL Transaction Log Custom Record (customrecord_nchl_transaction)
+   - 3.10. Custom Configuration Record
+   - 3.11. Company Information Setup Record (companyinformation)
+   - 3.12. File Cabinet Folder Record (folder)
+4. Cross-Record Entity Relationship & Data Flow Architecture
+5. Complete Custom Fields Data Dictionary
+
+================================================================================
+1. EXECUTIVE SUMMARY & AFFECTED RECORDS COUNT
+================================================================================
+A total of 12 NetSuite record types are touched, modified, created, or queried
+by the 32 scripts in the NCHL/NPI integration suite.
+
+Summary by Category:
+- Standard Transaction Records:       5
+- Standard Entity & Account Records:  2
+- Custom NetSuite Records:            2
+- System & Setup Records:             3
+----------------------------------------
+Total Records Affected:              12
+
+These records form a closed-loop banking architecture:
+1. Payee & Bank Setup: Configures verified banking coordinates on Vendors & Accounts.
+2. Payable Preparation: Pulls customs/tax assessments into Bills.
+3. Payment Execution: Validates approvals and captures payment instructions.
+4. Clearing & Gateway Dispatches: Posts CIPS/IPS batches to NCHL.
+5. Settlement & Audit: Logs responses and updates payment status flags.
+
+================================================================================
+2. MASTER TABLE OF ALL 12 AFFECTED RECORDS
+================================================================================
+
+#  | Record Name             | Internal ID                       | Category           | Flow Role
+---|-------------------------|-----------------------------------|--------------------|-----------------------------------
+1  | Vendor Payment          | vendorpayment                     | Standard Tran      | Outgoing single/mass payment
+2  | Vendor Bill             | vendorbill                        | Standard Tran      | Tax/customs assessment & bill
+3  | Vendor Prepayment       | vendorprepayment                  | Standard Tran      | Advance payment disbursement
+4  | Journal Entry           | journalentry                      | Standard Tran      | Bulk multi-beneficiary payment
+5  | Bank Fund Transfer      | transfer                          | Standard Tran      | Inbound/Outbound inter-bank transfer
+6  | Vendor                  | vendor                            | Standard Entity    | Payee category & bank registry
+7  | Account (COA)           | account                           | Standard Master    | Funding & receiving bank accounts
+8  | NCHL Bank Detail        | customrecord_rd_nchl_bank_detail  | Custom Record      | Bank registry & account validator
+9  | NCHL Transaction Log    | customrecord_nchl_transaction     | Custom Record      | Gateway audit trail & batch status
+10 | Integration Config      | [Custom Record]                   | Custom Record      | Integration switch & certificate
+11 | Company Information     | companyinformation                | System Config      | Legal entity name for IRD tax
+12 | File Cabinet Folder     | folder                            | File System Record | Holds npiconfig.js / configfile.js
+
+================================================================================
+3. COMPREHENSIVE DEEP-DIVE BY RECORD
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1. VENDOR PAYMENT
+--------------------------------------------------------------------------------
+- NetSuite Internal ID: vendorpayment (Transaction Type: VendPymt)
+- Record Category: Standard Transaction
+- Primary Functional Role: Outgoing disbursement for vendor bills.
+
+A. Custom Fields Added to Record:
+   1. custbody_nchl_payment_type (List/Select)
+      - Values: '1' = Real-Time CIPS, '2' = Non-Real-Time IPS.
+   2. custbody_rdnchl_bank (List/Record -> customrecord_rd_nchl_bank_detail)
+      - Stores the selected beneficiary bank account for this payment.
+   3. custbody_rdnchl_paid_online (Checkbox)
+      - Locked flag. Automatically set to TRUE when NCHL returns success code '000'.
+   4. custbody_ird_voucher_no (Free-Form Text)
+      - Copied from Vendor Bill if paying government tax.
+   5. custbody_npi_request_body (Long Text)
+      - Copied from Vendor Bill if paying Department of Customs duty.
+
+B. Scripts Operating on this Record:
+   - payment_button_ues.js (User Event):
+     * beforeLoad (view mode): If approvalstatus == '2' (Approved) and
+       custbody_rdnchl_paid_online == false, injects "Pay Online" button.
+     * beforeLoad (create/edit mode): Injects dynamic dropdown custpage_entity_bank
+       and copies bill tax/voucher properties.
+   - payment_client.js (Client Script):
+     * fieldChanged: When custbody_nchl_payment_type changes, dynamically filters
+       custpage_entity_bank between CIPS and IPS accounts.
+   - payment_confirm_page_sl.js (Suitelet):
+     * Loads the payment record, displays confirmation UI, submits payment to NCHL,
+       and updates custbody_rdnchl_paid_online = true.
+   - mpmod.js (Saved Search Module):
+     * Filters approved, unpaid vendor payments for mass batch processing.
+   - process_multiple_payment_sl.js (Suitelet):
+     * Renders payments in a sublist with checkboxes for bulk processing.
+   - schedule_process_multiple_payment.js (Scheduled Script):
+     * Loads queued payment records in background, dispatches batches, and sets
+       custbody_rdnchl_paid_online = true.
+
+--------------------------------------------------------------------------------
+3.2. VENDOR BILL
+--------------------------------------------------------------------------------
+- NetSuite Internal ID: vendorbill
+- Record Category: Standard Transaction
+- Primary Functional Role: Payables entry and government assessment capture.
+
+A. Custom Fields Added to Record:
+   1. custbody_doc_office (Long Text / JSON)
+      - Stores selected Department of Customs (DOC) office code and name.
+   2. custbody_npi_request_body (Long Text)
+      - Stores full JSON payload returned by NPI NECAS API for customs duty.
+   3. custbody_ird_voucher_no (Free-Form Text)
+      - Inland Revenue Department voucher / assessment number.
+
+B. Scripts Operating on this Record:
+   - get_ird_detail_ues.js (User Event):
+     * beforeLoad: If vendor department is 'DOC-FORM', injects DOC Office dropdown,
+       Bank Account selector, and "DOC Detail" button.
+     * beforeSubmit: Formats and stores selected DOC office JSON into custbody_doc_office.
+   - get_ird_detail_cs.js (Client Script):
+     * Launches get_doc_payment_detail_sl.js popup window.
+   - get_doc_payment_detail_sl.js (Suitelet):
+     * Communicates with NPI NECAS API (/api/tp/necas/detail), calculates assessed
+       duty, and auto-populates tax amount directly into the Bill expense line.
+   - payment_button_ues.js (User Event):
+     * When paying the bill, reads custbody_npi_request_body / custbody_ird_voucher_no
+       and transfers values to the child Vendor Payment.
+
+--------------------------------------------------------------------------------
+3.3. VENDOR PREPAYMENT
+--------------------------------------------------------------------------------
+- NetSuite Internal ID: vendorprepayment (Transaction Type: VPrep)
+- Record Category: Standard Transaction
+- Primary Functional Role: Advance payments to vendors prior to bill receipt.
+
+A. Custom Fields Added to Record:
+   - custbody_nchl_payment_type (List/Select: CIPS vs IPS)
+   - custbody_rdnchl_bank (List/Record -> customrecord_rd_nchl_bank_detail)
+   - custbody_rdnchl_paid_online (Checkbox)
+
+B. Scripts Operating on this Record:
+   - mpmod.js (Saved Search Module):
+     * Evaluates criteria: type anyof ["VendPymt", "VPrep"], approvalstatus == 2,
+       custbody_rdnchl_bank noneof @NONE@.
+   - process_multiple_payment_sl.js (Suitelet):
+     * Displays prepayments alongside vendor payments in mass-processing sublist.
+   - schedule_process_multiple_payment.js (Scheduled Script):
+     * Loads prepayment record, extracts amount via tranRecord.getValue('payment'),
+       submits batch to NCHL, and sets custbody_rdnchl_paid_online = true.
+
+--------------------------------------------------------------------------------
+3.4. JOURNAL ENTRY
+--------------------------------------------------------------------------------
+- NetSuite Internal ID: journalentry
+- Record Category: Standard Transaction
+- Primary Functional Role: Multi-line / bulk disbursements from funding bank account.
+
+A. Custom Fields Added to Record:
+   1. Header Fields:
+      - custbody_nchl_payment_type (List/Select: '1' = CIPS, '2' = IPS)
+      - custbody_rdnchl_paid_online (Checkbox)
+   2. Column / Line-Level Fields:
+      - custcol_col_entity_bank (List/Record -> customrecord_rd_nchl_bank_detail)
+        * Selected on each Credit line to specify the destination bank account.
+
+B. Scripts Operating on this Record:
+   - bulk_pmt_button_ues.js (User Event):
+     * beforeLoad: Injects "Pay Online" button linking to bulk payment Suitelet.
+   - journal_nchl_btn_ues.js (User Event):
+     * beforeLoad: Injects "Online Payment" button when approvalstatus == '2'.
+   - bulkpayment_confirm_page_sl.js (Suitelet):
+     * Iterates over Journal Entry lines:
+       - Debit line: Resolves funding debtor bank account.
+       - Credit lines: Resolves creditor banks from custcol_col_entity_bank.
+     * Bundles all lines into a multi-instruction NCHL batch.
+     * Posts batch to NCHL and marks header custbody_rdnchl_paid_online = true.
+   - journal_process_payment_sl.js (Suitelet):
+     * Alternative entry point for Journal processing.
+
+--------------------------------------------------------------------------------
+3.5. TRANSFER / BANK FUND TRANSFER
+--------------------------------------------------------------------------------
+- NetSuite Internal ID: transfer
+- Record Category: Standard Transaction
+- Primary Functional Role: Moving funds electronically between company bank accounts.
+
+A. Standard & Custom Fields Used:
+   - fromaccount / account (amount < 0): Funding / source bank account.
+   - toaccount / account (amount > 0): Receiving / destination bank account.
+   - custbody_nchl_payment_type (List/Select)
+   - custbody_rdnchl_paid_online (Checkbox)
+
+B. Scripts Operating on this Record:
+   - bank_fund_transfer.js (Suitelet):
+     * Searches transfer records, separates From and To accounts, and displays
+       a list of pending bank transfers.
+     * Queues selected transfers into the Scheduled Script for batch posting.
+   - schedule_process_multiple_payment.js (Scheduled Script):
+     * Loads transfer record, resolves debtor bank details from fromaccount and
+       creditor bank details from toaccount, dispatches to NCHL, and marks paid.
+
+--------------------------------------------------------------------------------
+3.6. VENDOR MASTER RECORD
+--------------------------------------------------------------------------------
+- NetSuite Internal ID: vendor (Entity Type)
+- Record Category: Standard Entity Master Data
+- Primary Functional Role: Payee entity classification & bank linkage.
+
+A. Custom Fields Added to Record:
+   1. custentity_rec_vendor_type (Long Text / JSON)
+      - Stores category: Government Payment ('GOVT'), Insurance Company ('INSU').
+   2. custentity_rec_vendor_subtype (Long Text / JSON)
+      - Stores subcategory code and label.
+   3. custentity_rec_vendor_department (Long Text / JSON)
+      - Stores specific agency/app ID (e.g. 'IRD', 'DOC-FORM').
+   4. custentity_entity_bank_detail (List/Record -> customrecord_rd_nchl_bank_detail)
+      - Multi-select field storing all verified bank accounts belonging to this vendor.
+
+B. Scripts Operating on this Record:
+   - vendor_type_from_npi_ues.js (User Event):
+     * beforeLoad: Injects dynamic UI dropdowns for Vendor Type, Subtype, and Department.
+     * beforeSubmit: Clears child fields if parent category is deselected.
+     * afterSubmit: Iterates over attached bank accounts and updates their
+       custrecord_nchl_bank_entity pointer to link back to the Vendor.
+   - ventypeclient.js (Client Script):
+     * Manages client-side cascading dropdown behavior and populates JSON strings.
+   - rdmodule.js:
+     * Reads custentity_rec_vendor_department to extract App ID for biller payments.
+
+--------------------------------------------------------------------------------
+3.7. ACCOUNT / CHART OF ACCOUNTS
+--------------------------------------------------------------------------------
+- NetSuite Internal ID: account
+- Record Category: Standard Master Data
+- Primary Functional Role: NetSuite GL Bank Accounts mapped to NCHL clearing accounts.
+
+A. Custom Fields Added to Record:
+   1. custrecord_rdnchl_coa_bank_detail (List/Record -> customrecord_rd_nchl_bank_detail)
+      - Links GL Account to its Real-Time CIPS bank profile.
+   2. custrecord_ips_bank (List/Record -> customrecord_rd_nchl_bank_detail)
+      - Links GL Account to its Non-Real-Time IPS bank profile.
+
+B. Scripts Operating on this Record:
+   - attach_coa_bank_detail_ues.js (User Event):
+     * afterSubmit: Reads custrecord_rdnchl_coa_bank_detail and custrecord_ips_bank
+       and updates the bank detail record with custrecord_nchl_bank_coa = Account ID.
+   - get_ird_detail_cs.js (Client Script):
+     * Loads Account record to look up funding bank details.
+   - rdmodule.js (Server Module):
+     * getcoabankdetail() searches Account record to retrieve debtor bank properties.
+   - payment_confirm_page_sl.js, bulkpayment_confirm_page_sl.js, schedule_process_multiple_payment.js:
+     * Resolves debtor funding coordinates from Account record.
+
+--------------------------------------------------------------------------------
+3.8. NCHL BANK DETAIL CUSTOM RECORD
+--------------------------------------------------------------------------------
+- NetSuite Internal ID: customrecord_rd_nchl_bank_detail
+- Record Category: Custom Record
+- Primary Functional Role: Verified bank account registry for all entities & GL accounts.
+
+A. Fields on this Record:
+   1. name (Standard Name Field)
+      - Auto-formatted as: "[Bank Name] ([Type]) [Account Name]".
+   2. custrecord_nchl_bank_entity (List/Record -> Entity/Vendor)
+      - Pointer to the owning Vendor.
+   3. custrecord_nchl_bank_coa (List/Record -> Account)
+      - Pointer to the owning Chart of Accounts bank account.
+   4. custrecord_nchl_bank_type (Free-Form Text / List)
+      - 'CIPS' (Real-Time) or 'IPS' (Non-Real-Time).
+   5. custrecord_rdnchl_bank_prop (Long Text)
+      - Serialized JSON: { value: bankId, text: bankName }.
+   6. custrecord_rdnchl_bank_branch_prop (Long Text)
+      - Serialized JSON: { value: branchId, text: branchName }.
+   7. custrecord_rdnchl_account_name (Free-Form Text)
+      - Account holder name as registered with the bank.
+   8. custrecord_rdnchl_account_number (Free-Form Text)
+      - Beneficiary or debtor bank account number.
+   9. custrecord_nchl_account_verified (Checkbox)
+      - Live validation confirmation from NCHL (/api/validatebankaccount).
+
+B. Scripts Operating on this Record:
+   - nchl_bank_detail_ues.js (User Event):
+     * beforeLoad: Injects dynamic Bank Type, NCHL Bank, and Branch dropdowns.
+     * beforeSubmit: Auto-generates standard record name.
+   - nchl_bank_detail_cs.js (Client Script):
+     * fieldChanged: Cascading selection (Type -> Bank -> Branch).
+     * saveRecord: Calls NCHL API to validate account details in real-time. Sets
+       custrecord_nchl_account_verified = true only on 100% name match.
+   - rdmoduleclient.js (Client Module):
+     * Executes /api/validatebankaccount against NPI.
+   - attach_coa_bank_detail_ues.js & vendor_type_from_npi_ues.js:
+     * Bi-directional pointer linkage.
+
+--------------------------------------------------------------------------------
+3.9. NCHL TRANSACTION LOG CUSTOM RECORD
+--------------------------------------------------------------------------------
+- NetSuite Internal ID: customrecord_nchl_transaction
+- Record Category: Custom Record
+- Primary Functional Role: Complete audit trail, payload store, and status tracker.
+
+A. Fields on this Record:
+   1. name (Standard Name Field)
+      - Unique Batch ID: "PMT-[ParentRecordID]-TRAN-[RecordID]".
+   2. custrecord_rd_ns_record_type (Free-Form Text)
+      - Originating NetSuite record type ('vendorpayment', 'journalentry', 'transfer').
+   3. custrecord_nchl_tran_rel_record (Free-Form Text / Integer)
+      - Internal ID of the originating NetSuite transaction.
+   4. custrecord_nchl_tran_mode (Free-Form Text / List)
+      - '1' for CIPS (Real-Time), '2' for IPS (Non-Real-Time).
+   5. custrecord_nchl_tran_raw_detail (Long Text)
+      - Raw parameter JSON passed from the originating payment form.
+   6. custrecord_nchl_tran_batch (Long Text)
+      - Formatted NCHL Batch Detail JSON (debtor info, batch amount, purpose).
+   7. custrecord_nchl_tran_instruction (Long Text)
+      - Formatted NCHL Transaction Detail JSON (creditor instruction list).
+   8. custrecord_nchl_tran_response (Long Text)
+      - Full JSON response returned by NCHL gateway.
+   9. custrecord_is_real_time (Checkbox)
+      - Real-time flag.
+   10. custrecord_show_pageinit_msg (Checkbox)
+       - Controls display of status notification banners.
+
+B. Scripts Operating on this Record:
+   - nchl_tran_gen_set_batchid_ues.js (User Event):
+     * beforeLoad: Evaluates response JSON, calculates status (SUCCESS, IN-PROGRESS,
+       FAILED), injects status banners, and adds "Status" live lookup button.
+     * afterSubmit: Formats Batch and Instruction JSON objects and assigns unique Batch ID.
+   - rdmodule.js (Server Module):
+     * savenchltran() initializes and saves new transaction log records.
+     * postcipsbatch() and postipsbatch() read batch payloads and record API responses.
+   - get_transaction_detail_sl.js (Suitelet):
+     * Loads record, queries NCHL API (/api/getnchlipstxnlistbybatchid), and displays
+       live line-item clearance results.
+
+--------------------------------------------------------------------------------
+3.10. INTEGRATION CONFIGURATION CUSTOM RECORD
+--------------------------------------------------------------------------------
+- NetSuite Internal ID: Custom Configuration Record (user-defined)
+- Record Category: Custom Record
+- Primary Functional Role: Global integration parameters.
+
+A. Fields on this Record:
+   - custrecord_post_pmt_on_approve (Checkbox): Auto-dispatch toggle.
+   - custrecord_cert_id (Free-Form Text): NetSuite digital certificate script ID.
+
+B. Scripts Operating on this Record:
+   - write_config_ues.js (User Event):
+     * afterSubmit: On edit, rewrites configfile.js into the File Cabinet.
+
+--------------------------------------------------------------------------------
+3.11. COMPANY INFORMATION SETUP RECORD
+--------------------------------------------------------------------------------
+- NetSuite Internal ID: companyinformation
+- Record Category: System Configuration Record
+- Primary Functional Role: Corporate identity reference for tax filings.
+
+A. Fields Read:
+   - legalname: NetSuite Company Legal Name.
+
+B. Scripts Operating on this Record:
+   - payment_confirm_page_sl.js (Suitelet):
+     * Reads legalname via config.load(config.Type.COMPANY_INFORMATION) to populate
+       Tax Payer Name for Inland Revenue Department (IRD) payments.
+
+--------------------------------------------------------------------------------
+3.12. FILE CABINET FOLDER RECORD
+--------------------------------------------------------------------------------
+- NetSuite Internal ID: folder
+- Record Category: File Cabinet System Record
+- Primary Functional Role: Physical storage folder for generated integration scripts.
+
+A. Folders Used:
+   - 'npiconfig' Folder: Created dynamically by genconfigfile_sl.js to house npiconfig.js.
+   - Folder ID 398: Referenced by write_config_ues.js to house configfile.js.
+
+================================================================================
+4. CROSS-RECORD ENTITY RELATIONSHIP & DATA FLOW ARCHITECTURE
+================================================================================
+
+```
++-------------------+           +-------------------------------------+
+|      Vendor       | 1 ----- N |  customrecord_rd_nchl_bank_detail   |
+|     (vendor)      |           |          (Payee Bank Record)        |
++-------------------+           +-------------------------------------+
+          |                                        |
+          | 1                                      | 1
+          |                                        |
+          v N                                      v N
++-------------------+           +-------------------------------------+
+|    Vendor Bill    | 1 ----- 1 |           Vendor Payment            |
+|   (vendorbill)    |           |          (vendorpayment)            |
++-------------------+           +-------------------------------------+
+                                                   |
+                                                   | 1
+                                                   v 1
++-------------------+           +-------------------------------------+
+|   Account (COA)   | 1 ----- N |    customrecord_nchl_transaction    |
+|   (account GL)    |           |          (NCHL Gateway Log)         |
++-------------------+           +-------------------------------------+
+          |                                        ^
+          | 1 (From / To)                          | 1
+          v                                        |
++-------------------+                              |
+|   Bank Transfer   | 1 ---------------------------+
+|    (transfer)     |
++-------------------+
+          |
+          | 1 (Debit / Credit)
+          v
++-------------------+
+|   Journal Entry   | 1 ---------------------------+
+|  (journalentry)   |
++-------------------+
+```
+
+RELATIONSHIP SUMMARY:
+1. One Vendor can have Multiple NCHL Bank Detail records (1:N).
+2. One Account (GL Bank) links to its respective CIPS and IPS Bank Detail records (1:1).
+3. Vendor Bill assessment payloads copy down to child Vendor Payments upon bill payment.
+4. Vendor Payment, Journal Entry, or Bank Transfer generates One primary
+   NCHL Transaction Log record per payment run (1:1).
+5. Successful clearance in NCHL updates the originating transaction's
+   custbody_rdnchl_paid_online flag to TRUE.
+
+================================================================================
+5. COMPLETE CUSTOM FIELDS DATA DICTIONARY
+================================================================================
+
+FIELD ID                         | APPLIES TO            | TYPE       | PURPOSE
+---------------------------------|-----------------------|------------|-----------------------------------------
+custbody_nchl_payment_type       | Transactions          | List       | Selects CIPS Real-Time vs IPS Non-Real-Time
+custbody_rdnchl_bank             | Transactions          | List/Rec   | Destination beneficiary bank account
+custbody_rdnchl_paid_online      | Transactions          | Checkbox   | Settlement flag: checked when payment clears
+custbody_ird_voucher_no          | Bill / Payment        | Text       | IRD tax voucher / assessment number
+custbody_npi_request_body        | Bill / Payment        | Long Text  | DOC customs duty payload JSON
+custbody_doc_office              | Bill                  | Long Text  | Selected DOC customs office JSON
+custcol_col_entity_bank          | Journal Entry Lines   | List/Rec   | Destination bank account for credit line
+custentity_rec_vendor_type       | Vendor                | Long Text  | Vendor payment category (GOVT, INSU, etc.)
+custentity_rec_vendor_subtype    | Vendor                | Long Text  | Vendor subcategory JSON
+custentity_rec_vendor_department | Vendor                | Long Text  | Vendor department / agency code JSON
+custentity_entity_bank_detail    | Vendor                | Multi-List | List of bank accounts owned by vendor
+custrecord_rdnchl_coa_bank_detail| Account (COA)         | List/Rec   | Link to CIPS bank profile
+custrecord_ips_bank              | Account (COA)         | List/Rec   | Link to IPS bank profile
+custrecord_nchl_bank_entity      | Bank Detail Record    | List/Rec   | Link to owning Vendor
+custrecord_nchl_bank_coa         | Bank Detail Record    | List/Rec   | Link to owning GL Account
+custrecord_nchl_bank_type        | Bank Detail Record    | Text/List  | 'CIPS' or 'IPS'
+custrecord_rdnchl_bank_prop      | Bank Detail Record    | Long Text  | JSON: { value: bankId, text: bankName }
+custrecord_rdnchl_bank_branch_prop| Bank Detail Record   | Long Text  | JSON: { value: branchId, text: branchName }
+custrecord_rdnchl_account_name   | Bank Detail Record    | Text       | Bank account holder name
+custrecord_rdnchl_account_number | Bank Detail Record    | Text       | Bank account number
+custrecord_nchl_account_verified | Bank Detail Record    | Checkbox   | Live verification confirmation from NCHL
+custrecord_rd_ns_record_type     | NCHL Transaction Log  | Text       | Originating transaction type
+custrecord_nchl_tran_rel_record  | NCHL Transaction Log  | Text/Int   | Originating transaction internal ID
+custrecord_nchl_tran_mode        | NCHL Transaction Log  | List/Text  | Mode: '1' = CIPS, '2' = IPS
+custrecord_nchl_tran_raw_detail  | NCHL Transaction Log  | Long Text  | Raw input parameters JSON
+custrecord_nchl_tran_batch       | NCHL Transaction Log  | Long Text  | Formatted NCHL batch JSON
+custrecord_nchl_tran_instruction | NCHL Transaction Log  | Long Text  | Formatted NCHL instruction array JSON
+custrecord_nchl_tran_response    | NCHL Transaction Log  | Long Text  | Full gateway response JSON
+custrecord_is_real_time          | NCHL Transaction Log  | Checkbox   | Real-time flag
+custrecord_show_pageinit_msg     | NCHL Transaction Log  | Checkbox   | Status banner display trigger
+custrecord_post_pmt_on_approve   | Config Record         | Checkbox   | Auto-post on approval setting
+custrecord_cert_id               | Config Record         | Text       | Digital certificate script ID
+================================================================================
