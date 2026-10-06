@@ -2,7 +2,36 @@
  * @NApiVersion 2.1
  * @NScriptType UserEventScript
  */
-define(['N/ui/serverWidget', './rdmodule'], function (serverWidget, rdmodu) {
+define(['N/ui/serverWidget', './rdmodule', 'N/error'], function (serverWidget, rdmodu, error) {
+    const ACCOUNT_FIELDS = ['custrecord_rdnchl_bank_prop', 'custrecord_rdnchl_account_number', 'custrecord_rdnchl_account_name']
+
+    /**
+     * Server-side NCHL account check, so the verified flag cannot be ticked by hand or skipped by
+     * imports and scripts. Runs when the account details change or the record is not verified yet.
+     */
+    function verifyaccount(context) {
+        const rec = context.newRecord
+        const old = context.oldRecord
+        const changed = !old || ACCOUNT_FIELDS.some(fieldId => String(old.getValue(fieldId)) !== String(rec.getValue(fieldId)))
+        if (!changed && old.getValue('custrecord_nchl_account_verified')) {
+            return
+        }
+        const bankProp = JSON.parse(rec.getValue('custrecord_rdnchl_bank_prop') || '{}')
+        const accountNumber = rec.getValue('custrecord_rdnchl_account_number')
+        const accountName = rec.getValue('custrecord_rdnchl_account_name')
+        const result = rdmodu.verifyaccount({bankId: bankProp.value, accountNumber: accountNumber, accountName: accountName})
+        log.audit('NCHL_ACCOUNT_VERIFY', {account: accountNumber, match: result.matchPercentate})
+        if (result.matchPercentate !== 100) {
+            throw error.create({
+                name: 'NCHL_ACCOUNT_NOT_VERIFIED',
+                message: `NCHL could not verify account ${accountNumber} (${accountName}) at ${bankProp.text}: ` +
+                    (result.responseMessage || `name match ${result.matchPercentate}%`),
+                notifyOff: true
+            })
+        }
+        rec.setValue({fieldId: 'custrecord_nchl_account_verified', value: true})
+    }
+
     return {
         beforeLoad: context => {
             const form = context.form
@@ -131,6 +160,17 @@ define(['N/ui/serverWidget', './rdmodule'], function (serverWidget, rdmodu) {
                     context.newRecord.setValue({fieldId: 'name', value: recordName})
                 } catch (e) {
                     log.error({title: e.name, details: e.message})
+                }
+                verifyaccount(context)
+            } else if (context.type === 'xedit') {
+                // inline edits only carry the changed fields: account details and the flag need the full form
+                const editedFields = context.newRecord.getFields()
+                if (ACCOUNT_FIELDS.concat('custrecord_nchl_account_verified').some(fieldId => editedFields.includes(fieldId))) {
+                    throw error.create({
+                        name: 'NCHL_ACCOUNT_EDIT',
+                        message: 'Change NCHL bank account details in the full bank detail form so NCHL can verify them.',
+                        notifyOff: true
+                    })
                 }
             }
         }

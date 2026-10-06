@@ -151,8 +151,37 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 })
                 return selectOptions
             },
+            /**
+             * Asks NCHL whether the account number and name match the bank's records
+             * @param option
+             * @param {string} option.bankId NCHL bank id
+             * @param {string} option.accountNumber
+             * @param {string} option.accountName
+             * @returns {Object} NCHL answer; matchPercentate 100 means verified
+             */
             verifyaccount: function (option) {
-
+                const npiAuth = JSON.parse(this.generatetoken())
+                const response = http.request({
+                    method: http.Method.POST,
+                    url: npiconf.HOST + '/api/validatebankaccount',
+                    headers: {
+                        'content-type': 'application/json',
+                        'authorization': 'Bearer ' + npiAuth.access_token,
+                        'accept': '*/*'
+                    },
+                    body: JSON.stringify({
+                        bankId: option.bankId,
+                        accountId: option.accountNumber,
+                        accountName: option.accountName
+                    })
+                })
+                if (response.code !== 200) {
+                    throw error.create({
+                        name: 'NCHL_VERIFY_ERROR',
+                        message: 'NCHL account check failed with HTTP ' + response.code + ': ' + response.body
+                    })
+                }
+                return JSON.parse(response.body)
             },
             getappid: function (entityid) {
                 try {
