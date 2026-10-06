@@ -1,0 +1,25 @@
+<suitelet scriptid="customscript_lc_contra_pmt_confirm">
+  <description></description>
+  <isinactive>F</isinactive>
+  <name>LC contra payment confirm page</name>
+  <notifyadmins>F</notifyadmins>
+  <notifyemails></notifyemails>
+  <notifyowner>T</notifyowner>
+  <notifyuser>F</notifyuser>
+  <scriptfile>[/SuiteScripts/rdnchl/contra_payment_confirm_page_sl.js]</scriptfile>
+  <scriptdeployments>
+    <scriptdeployment scriptid="customdeploy_lc_contra_pmt_confirm">
+      <allemployees>F</allemployees>
+      <allpartners>F</allpartners>
+      <allroles>F</allroles>
+      <audslctrole></audslctrole>
+      <eventtype></eventtype>
+      <isdeployed>T</isdeployed>
+      <isonline>F</isonline>
+      <loglevel>DEBUG</loglevel>
+      <runasrole></runasrole>
+      <status>TESTING</status>
+      <title>contra payment confirm page</title>
+    </scriptdeployment>
+  </scriptdeployments>
+</suitelet>

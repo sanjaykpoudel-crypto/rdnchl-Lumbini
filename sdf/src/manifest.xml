@@ -7,6 +7,7 @@
       <feature required="false">CRM</feature>
     </features>
     <objects>
+      <object>customtransaction_contra</object>
       <object>customrecord_rd_nchl_bank_detail</object>
       <object>customrecord_nchl_transaction</object>
     </objects>
