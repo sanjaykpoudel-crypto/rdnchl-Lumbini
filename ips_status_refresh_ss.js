@@ -3,17 +3,17 @@
  * @NScriptType ScheduledScript
  */
 define(['N/search', 'N/runtime', './rdmodule'], function (search, runtime, rdmodu) {
-    // checks IPS transactions from the last 30 days that NCHL has not settled yet
+    // checks CIPS and IPS transfers from the last 30 days that NCHL has not settled yet (bill payments are skipped)
     const LOOKBACK = 'daysago30'
 
     return {
         execute: () => {
             const script = runtime.getCurrentScript()
-            const counts = {checked: 0, SUCCESS: 0, FAILED: 0, 'IN-PROGRESS': 0, UNKNOWN: 0, errors: 0}
+            const counts = {checked: 0, SUCCESS: 0, FAILED: 0, 'IN-PROGRESS': 0, UNKNOWN: 0, skipped: 0, errors: 0}
             search.create({
                 type: 'customrecord_nchl_transaction',
                 filters: [
-                    ['custrecord_nchl_tran_mode', 'anyof', '2'],
+                    ['custrecord_nchl_tran_mode', 'anyof', ['1', '2']],
                     'AND',
                     ['isinactive', 'is', 'F'],
                     'AND',
@@ -22,7 +22,7 @@ define(['N/search', 'N/runtime', './rdmodule'], function (search, runtime, rdmod
                 columns: ['name']
             }).run().each(result => {
                 if (script.getRemainingUsage() < 200) {
-                    log.audit('IPS_STATUS_STOPPED', 'Low governance, the rest is checked in the next run')
+                    log.audit('NCHL_STATUS_STOPPED', 'Low governance, the rest is checked in the next run')
                     return false
                 }
                 const saved = search.lookupFields({
@@ -35,16 +35,16 @@ define(['N/search', 'N/runtime', './rdmodule'], function (search, runtime, rdmod
                     return true
                 }
                 try {
-                    const refreshed = rdmodu.refreshipsstatus(result.id)
+                    const refreshed = rdmodu.refreshtranstatus(result.id)
                     counts.checked++
-                    if (refreshed) counts[refreshed.status]++
+                    counts[refreshed ? refreshed.status : 'skipped']++
                 } catch (e) {
                     counts.errors++
-                    log.error('IPS_STATUS_ERROR', {nchltran: result.getValue('name'), error: e.message || e})
+                    log.error('NCHL_STATUS_ERROR', {nchltran: result.getValue('name'), error: e.message || e})
                 }
                 return true
             })
-            log.audit('IPS_STATUS_SUMMARY', counts)
+            log.audit('NCHL_STATUS_SUMMARY', counts)
         }
     }
 })

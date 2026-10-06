@@ -1,7 +1,7 @@
 <scheduledscript scriptid="customscript_lc_ips_status_refresh">
-  <description>Checks unsettled NCHL IPS (non real time) payments with NCHL and saves the result. Marks payments paid once settled.</description>
+  <description>Checks unsettled NCHL CIPS and IPS payments with NCHL and saves the result. Marks payments paid once settled.</description>
   <isinactive>F</isinactive>
-  <name>LC NCHL IPS Status Refresh</name>
+  <name>LC NCHL Payment Status Refresh</name>
   <notifyadmins>F</notifyadmins>
   <notifyemails></notifyemails>
   <notifyowner>T</notifyowner>

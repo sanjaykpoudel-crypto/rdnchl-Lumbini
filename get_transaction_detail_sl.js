@@ -12,8 +12,8 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message'], function
                 id: context.request.parameters.recid
             })
             const batch = JSON.parse(tranRec.getValue('custrecord_nchl_tran_batch'))
-            // IPS: query NCHL and save the result on the NCHL transaction (and mark the payment paid once settled)
-            const refreshed = rdmod.refreshipsstatus(context.request.parameters.recid, context.request.parameters.token)
+            // query NCHL and save the result on the NCHL transaction (and mark the payment paid once settled)
+            const refreshed = rdmod.refreshtranstatus(context.request.parameters.recid, context.request.parameters.token)
             if (refreshed) {
                 form.addPageInitMessage({
                     message: message.create({
@@ -24,7 +24,11 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message'], function
                     })
                 })
             }
-            const detailResponse = refreshed ? null : rdmod.getipstrandetail({batchid: batch.batchId, token: context.request.parameters.token})
+            // CIPS (mode 1) batches are looked up on the CIPS endpoint, not the IPS one
+            const isRealTime = tranRec.getValue('custrecord_nchl_tran_mode') === '1'
+            const detailOption = {batchid: batch.batchId, token: context.request.parameters.token}
+            const detailResponse = refreshed ? null
+                : isRealTime ? rdmod.getcipstrandetail(detailOption) : rdmod.getipstrandetail(detailOption)
 
             const instructionSublist = form.addSublist({
                 id: 'instructions',
@@ -52,7 +56,9 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message'], function
                 type: serverWidget.FieldType.TEXT
             })
             const responseBody = refreshed ? refreshed.detail : JSON.parse(detailResponse.body)
-            (responseBody.nchlIpsTransactionDetailList || []).forEach((inst, line) => {
+            const lines = responseBody.nchlIpsTransactionDetailList || responseBody.cipsTransactionDetailList
+                || Object.values(responseBody).find(value => Array.isArray(value)) || []
+            lines.forEach((inst, line) => {
                 instructionSublist.setSublistValue({
                     id: 'custpage_ac_name',
                     value: inst.creditorName,

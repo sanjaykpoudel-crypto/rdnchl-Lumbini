@@ -516,8 +516,21 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
              * @returns {ClientResponse}
              */
             getipstrandetail: function (option) {
+                return this.gettrandetail(option, '/api/getnchlipstxnlistbybatchid', 'IPS_TRAN_DET_RESP')
+            },
+            /**
+             * Status of a CIPS (real time) batch
+             * @param option
+             * @param {string} option.batchid
+             * @param {string} option.token
+             * @returns {ClientResponse}
+             */
+            getcipstrandetail: function (option) {
+                return this.gettrandetail(option, '/api/getcipstxnlistbybatchid', 'CIPS_TRAN_DET_RESP')
+            },
+            gettrandetail: function (option, uri, logTitle) {
                 const npiAuth = option.token ? {access_token: option.token} : JSON.parse(this.generatetoken())
-                const url = npiconf.HOST + '/api/getnchlipstxnlistbybatchid'
+                const url = npiconf.HOST + uri
                 const response = http.request({
                     method: http.Method.POST,
                     url: url,
@@ -530,19 +543,20 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                         batchId: option.batchid
                     })
                 })
-                log.debug('IPS_TRAN_DET_RESP', response)
+                log.debug(logTitle, response)
                 return response
             },
             /**
-             * Asks NCHL for the settlement status of an IPS (non real time) transaction, saves it on the
-             * NCHL transaction record and marks the related record paid once every credit is settled.
+             * Asks NCHL for the settlement status of a CIPS (real time) or IPS (non real time) transfer, saves it
+             * on the NCHL transaction record and marks the related record paid once every credit is settled.
              * Only a failed debit counts as FAILED; any other unsettled credit stays IN-PROGRESS so a
              * second payment remains blocked until someone checks with the bank.
+             * Bill payments (IRD / DOC) have their own lodge/confirm result and are not refreshed here.
              * @param {string|number} nchltranid
              * @param {string} [token] NPI access token to reuse
-             * @returns {{status: string, message: string, detail: Object}|null} null when not an IPS transaction
+             * @returns {{status: string, message: string, detail: Object}|null} null when not refreshable
              */
-            refreshipsstatus: function (nchltranid, token) {
+            refreshtranstatus: function (nchltranid, token) {
                 const tran = search.lookupFields({
                     type: 'customrecord_nchl_transaction',
                     id: nchltranid,
@@ -550,19 +564,22 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                         'custrecord_nchl_tran_rel_record', 'custrecord_rd_ns_record_type']
                 })
                 const mode = tran.custrecord_nchl_tran_mode.length ? tran.custrecord_nchl_tran_mode[0].value : ''
-                if (mode !== '2') {
+                const isBillPayment = /"responseResult"/.test(tran.custrecord_nchl_tran_response || '')
+                if ((mode !== '1' && mode !== '2') || isBillPayment) {
                     return null
                 }
+                const isRealTime = mode === '1'
                 const batch = JSON.parse(tran.custrecord_nchl_tran_batch || '{}')
-                const response = this.getipstrandetail({batchid: batch.batchId, token: token})
+                const detailOption = {batchid: batch.batchId, token: token}
+                const response = isRealTime ? this.getcipstrandetail(detailOption) : this.getipstrandetail(detailOption)
                 if (response.code !== 200) {
                     throw error.create({
-                        name: 'NCHL_IPS_STATUS_ERROR',
+                        name: 'NCHL_STATUS_ERROR',
                         message: 'NCHL status request for ' + batch.batchId + ' failed with HTTP ' + response.code + ': ' + response.body
                     })
                 }
                 const detail = JSON.parse(response.body)
-                const lines = detail.nchlIpsTransactionDetailList || []
+                const lines = (isRealTime ? detail.cipsTransactionDetailList : detail.nchlIpsTransactionDetailList) || []
                 const debitFailed = !!detail.debitStatus && detail.debitStatus !== '000'
                 if (!debitFailed && lines.length === 0) {
                     return {status: this.gettranstatus(tran.custrecord_nchl_tran_response).status, message: 'NCHL returned no transactions yet', detail: detail}
@@ -590,11 +607,11 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                             creditStatus: settled ? '000' : line.creditStatus,
                             nchlCreditStatus: line.creditStatus,
                             instructionId: line.instructionId,
-                            responseMessage: settled ? 'SETTLED' : 'NCHL IPS credit status ' + line.creditStatus +
+                            responseMessage: settled ? 'SETTLED' : 'NCHL credit status ' + line.creditStatus +
                                 (reason ? ': ' + reason : '') + (line.reversalStatus ? ' (reversal ' + line.reversalStatus + ')' : '')
                         }
                     }),
-                    ipsStatusCheck: {checkedAt: new Date().toISOString(), settlementDate: detail.settlementDate},
+                    statusCheck: {checkedAt: new Date().toISOString(), settlementDate: detail.settlementDate},
                     originalResponse: previous.originalResponse || tran.custrecord_nchl_tran_response
                 }
                 const responseText = JSON.stringify(normalized)
@@ -611,7 +628,7 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                         values: {custbody_rdnchl_paid_online: true}
                     })
                 }
-                log.audit('IPS_STATUS_REFRESHED', {nchltran: nchltranid, batchId: batch.batchId, status: tranStatus.status})
+                log.audit('NCHL_STATUS_REFRESHED', {nchltran: nchltranid, batchId: batch.batchId, status: tranStatus.status})
                 return {status: tranStatus.status, message: tranStatus.message, detail: detail}
             },
             /**
