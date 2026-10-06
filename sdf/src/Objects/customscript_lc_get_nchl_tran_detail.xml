@@ -18,7 +18,7 @@
       <isonline>F</isonline>
       <loglevel>DEBUG</loglevel>
       <runasrole>ADMINISTRATOR</runasrole>
-      <status>TESTING</status>
+      <status>RELEASED</status>
       <title>Get NCHL Tran Detail</title>
     </scriptdeployment>
   </scriptdeployments>

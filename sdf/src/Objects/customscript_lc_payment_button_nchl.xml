@@ -20,7 +20,7 @@
       <loglevel>DEBUG</loglevel>
       <recordtype>VENDORPAYMENT</recordtype>
       <runasrole></runasrole>
-      <status>TESTING</status>
+      <status>RELEASED</status>
     </scriptdeployment>
     <scriptdeployment scriptid="customdeploy_lc_payment_button_vprep">
       <allemployees>F</allemployees>
@@ -34,7 +34,7 @@
       <loglevel>DEBUG</loglevel>
       <recordtype>VENDORPREPAYMENT</recordtype>
       <runasrole>ADMINISTRATOR</runasrole>
-      <status>TESTING</status>
+      <status>RELEASED</status>
     </scriptdeployment>
   </scriptdeployments>
 </usereventscript>

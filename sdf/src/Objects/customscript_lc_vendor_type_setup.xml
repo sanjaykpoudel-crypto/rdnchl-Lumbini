@@ -20,7 +20,7 @@
       <loglevel>DEBUG</loglevel>
       <recordtype>EMPLOYEE</recordtype>
       <runasrole>ADMINISTRATOR</runasrole>
-      <status>TESTING</status>
+      <status>RELEASED</status>
     </scriptdeployment>
     <scriptdeployment scriptid="customdeploy_lc_vendor_type_setup">
       <allemployees>F</allemployees>
@@ -34,7 +34,7 @@
       <loglevel>DEBUG</loglevel>
       <recordtype>VENDOR</recordtype>
       <runasrole>ADMINISTRATOR</runasrole>
-      <status>TESTING</status>
+      <status>RELEASED</status>
     </scriptdeployment>
   </scriptdeployments>
 </usereventscript>

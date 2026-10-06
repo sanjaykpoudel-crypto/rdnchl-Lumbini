@@ -19,7 +19,7 @@
       <isdeployed>T</isdeployed>
       <loglevel>DEBUG</loglevel>
       <recordtype>VENDORPAYMENT</recordtype>
-      <status>TESTING</status>
+      <status>RELEASED</status>
     </scriptdeployment>
     <scriptdeployment scriptid="customdeploy_lc_payee_bank_vprep">
       <allemployees>F</allemployees>
@@ -32,7 +32,7 @@
       <isdeployed>T</isdeployed>
       <loglevel>DEBUG</loglevel>
       <recordtype>VENDORPREPAYMENT</recordtype>
-      <status>TESTING</status>
+      <status>RELEASED</status>
     </scriptdeployment>
   </scriptdeployments>
 </clientscript>

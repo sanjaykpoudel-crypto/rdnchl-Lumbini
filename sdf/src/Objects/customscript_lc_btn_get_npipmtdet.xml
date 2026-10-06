@@ -20,7 +20,7 @@
       <loglevel>DEBUG</loglevel>
       <recordtype>VENDORBILL</recordtype>
       <runasrole>ADMINISTRATOR</runasrole>
-      <status>TESTING</status>
+      <status>RELEASED</status>
     </scriptdeployment>
   </scriptdeployments>
 </usereventscript>
