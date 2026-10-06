@@ -25,29 +25,14 @@ define(['./rdmoduleclient'], function (rdmodc) {
                 })
                 var subTypes = rdmodc.getbillers(vendorType)
                 console.log(subTypes)
-                const isAppList = subTypes.filter(function (subtype){
-                    return subtype.type === 'APP'
+                // NCHL can mix categories (drill down further) and payees (type APP) in one list
+                subTypes.forEach(function (subtype) {
+                    const targetField = subtype.type === 'APP' ? departField : subTypeField
+                    targetField.insertSelectOption({
+                        value: subtype.code,
+                        text: subtype.labelText
+                    })
                 })
-                if (isAppList.length > 0) {
-                    //subTypeField.isDisabled = true
-                    const venDeprtField = context.currentRecord.getField({fieldId: 'custpage_vendor_depart'})
-                    venDeprtField.removeSelectOption({value: null})
-                    venDeprtField.insertSelectOption({value: '', text: ''})
-                    subTypes.forEach(function (subtype) {
-                        venDeprtField.insertSelectOption({
-                            value: subtype.code,
-                            text: subtype.labelText
-                        })
-                    })
-                } else {
-                    //subTypeField.isDisabled = !subTypeField.isDisabled
-                    subTypes.forEach(function (subtype) {
-                        subTypeField.insertSelectOption({
-                            value: subtype.code,
-                            text: subtype.labelText
-                        })
-                    })
-                }
             } else if (context.fieldId === 'custpage_vendor_sub_type') {
                 var subtypeval = context.currentRecord.getValue(context.fieldId)
                 console.log(subtypeval)
@@ -59,7 +44,7 @@ define(['./rdmoduleclient'], function (rdmodc) {
                             text: context.currentRecord.getText(context.fieldId)
                         })
                     })
-                    departments = rdmodc.getbillers(subtypeval)
+                    const departments = rdmodc.getbillers(subtypeval)
                     const comField = context.currentRecord.getField({fieldId: 'custpage_vendor_depart'})
                     comField.removeSelectOption({value: null})
                     comField.insertSelectOption({value: '', text: ''})
