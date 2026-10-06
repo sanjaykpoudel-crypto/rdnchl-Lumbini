@@ -1,5 +1,5 @@
 /**
- * @NApiVersion 2.x
+ * @NApiVersion 2.1
  * @NScriptType ClientScript
  */
 define(['./rdmoduleclient', 'N/ui/message'], function (rdmodc, message) {
