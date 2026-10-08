@@ -9,6 +9,8 @@ define(['./rdmoduleclient'], function (rdmodc) {
                 const paymentType = context.currentRecord.getValue(context.fieldId)
                 const type = paymentType === '1' ? 'CIPS' : 'IPS'
                 const entityBankField = context.currentRecord.getField({fieldId: 'custpage_entity_bank'})
+                // Only present when the user event added it (create/edit of a single payment)
+                if (!entityBankField) return
                 const entityId = context.currentRecord.getValue('entity')
                 var selectOptions = rdmodc.getentitybanks(entityId, type)
                 entityBankField.removeSelectOption({value: null})

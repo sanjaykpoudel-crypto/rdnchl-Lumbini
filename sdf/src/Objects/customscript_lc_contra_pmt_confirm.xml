@@ -11,7 +11,7 @@
     <scriptdeployment scriptid="customdeploy_lc_contra_pmt_confirm">
       <allemployees>F</allemployees>
       <allpartners>F</allpartners>
-      <allroles>F</allroles>
+      <allroles>T</allroles>
       <audslctrole></audslctrole>
       <eventtype></eventtype>
       <isdeployed>T</isdeployed>
