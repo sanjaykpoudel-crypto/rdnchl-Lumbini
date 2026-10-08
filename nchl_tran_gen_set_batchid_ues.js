@@ -82,36 +82,62 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                             }).updateDisplayType({displayType: 'inline'})
                                 .defaultValue = reasonmsg
                         }
-                        // IPS (mode '2') responses only confirm the batch was received, so let the user query settlement
-                        const isIps = context.newRecord.getValue('custrecord_nchl_tran_mode') === '2'
-                        if (status === 'IN-PROGRESS' || (status === 'UNKNOWN' && isIps)) {
-                            /* form.addButton({
-                                 id: 'custpage_reinitiate',
-                                 label: 'Reinitiate',
-                                 functionName: `reinitiatetran('${JSON.stringify(requestBody)}')`
-                             })*/
-                            const tranDetailLink = url.resolveScript({
-                                scriptId: 'customscript_lc_get_nchl_tran_detail',
-                                deploymentId: 'customdeploy_lc_get_nchl_tran_detail',
-                                params: {
-                                    rectype: context.newRecord.type,
-                                    recid: context.newRecord.id
-                                }
-                            })
-                            //form.clientScriptModulePath = './justfortoken.js'
-                            form.addButton({
-                                id: 'custpage_get_tran_det',
-                                label: 'Status',
-                                //functionName: `generatetoken('${tranDetailLink}')`
-                                functionName: `window.open('${tranDetailLink}')`
-                            })
-                        }
                     } else if (!tranresp && status === 'empty') {
                         status = 'Not posted'
                         msgDetail = 'Unexpected error occurred'
                     }
+                    // Resync only asks NCHL for the current status (rdmodule.refreshtranstatus); it never resends the
+                    // payment, because a timed-out or failed-looking request may still have debited the account.
+                    // Biller payments (IRD / DOC) have no status API, so they are left out.
+                    const mode = context.newRecord.getValue('custrecord_nchl_tran_mode')
+                    const isBillerResponse = /"responseResult"/.test(tranresp || '')
+                    if ((mode === '1' || mode === '2') && !isBillerResponse && status !== 'SUCCESS') {
+                        const resyncLink = url.resolveScript({
+                            scriptId: 'customscript_lc_get_nchl_tran_detail',
+                            deploymentId: 'customdeploy_lc_get_nchl_tran_detail',
+                            params: {
+                                rectype: context.newRecord.type,
+                                recid: context.newRecord.id,
+                                resync: 'T'
+                            }
+                        })
+                        form.addButton({
+                            id: 'custpage_resync_nchl',
+                            label: 'Resync with NCHL',
+                            // NetSuite appends "()" to functionName, so pass a function rather than a statement
+                            functionName: `(function () { window.location.href = '${resyncLink}' })`
+                        })
+                    }
+                    form.addTab({id: 'custpage_nchl_response_tab', label: 'NCHL Response'})
+                    let prettyResponse = tranresp || 'No response received from NCHL'
+                    try {
+                        prettyResponse = JSON.stringify(JSON.parse(tranresp), null, 2)
+                    } catch (e) {
+                        // not JSON (e.g. a connection error message): show it as saved
+                    }
+                    const escapedResponse = prettyResponse.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                    form.addField({
+                        id: 'custpage_nchl_response_json',
+                        label: 'NCHL Response',
+                        type: 'inlinehtml',
+                        container: 'custpage_nchl_response_tab'
+                    }).defaultValue = '<pre style="white-space:pre-wrap;word-break:break-all;font-size:12px;' +
+                        'background:#f6f8fa;border:1px solid #d0d7de;padding:10px;max-height:600px;overflow:auto">' +
+                        escapedResponse + '</pre>'
                     const showmessage = context.newRecord.getValue('custrecord_show_pageinit_msg')
-                    if (showmessage) {
+                    // set by the resync Suitelet's redirect; both come from the URL, so escape before showing
+                    const escapeHtml = text => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                    const resyncStatus = context.request && context.request.parameters.nchlresync
+                    if (resyncStatus) {
+                        form.addPageInitMessage({
+                            message: message.create({
+                                type: resyncStatus === 'SUCCESS' ? message.Type.CONFIRMATION
+                                    : resyncStatus === 'FAILED' ? message.Type.ERROR : message.Type.INFORMATION,
+                                title: 'Resynced with NCHL: ' + escapeHtml(resyncStatus),
+                                message: escapeHtml(context.request.parameters.nchlresyncmsg || '')
+                            })
+                        })
+                    } else if (showmessage) {
                         form.addPageInitMessage({
                             message: message.create({
                                 type: msgType,

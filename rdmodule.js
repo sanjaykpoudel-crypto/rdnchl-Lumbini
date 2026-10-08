@@ -611,7 +611,14 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 const lines = (isRealTime ? detail.cipsTransactionDetailList : detail.nchlIpsTransactionDetailList) || []
                 const debitFailed = !!detail.debitStatus && detail.debitStatus !== '000'
                 if (!debitFailed && lines.length === 0) {
-                    return {status: this.gettranstatus(tran.custrecord_nchl_tran_response).status, message: 'NCHL returned no transactions yet', detail: detail}
+                    const savedStatus = this.gettranstatus(tran.custrecord_nchl_tran_response).status
+                    return {
+                        status: savedStatus,
+                        message: savedStatus === 'FAILED'
+                            ? 'NCHL has no transaction for this batch: it was rejected, so nothing was paid.'
+                            : 'NCHL has no transaction for this batch yet.',
+                        detail: detail
+                    }
                 }
                 let previous = {}
                 try {

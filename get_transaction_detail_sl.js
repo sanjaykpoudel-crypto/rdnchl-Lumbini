@@ -2,10 +2,46 @@
  * @NApiVersion 2.1
  * @NScriptType Suitelet
  */
-define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message'], function (serverWidget, record, rdmod, message) {
+define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redirect', 'N/url'], function (serverWidget, record, rdmod, message, redirect, url) {
     return {
         onRequest: context => {
             const form = serverWidget.createForm({title: 'NCHL Transaction Detail'})
+            // "Resync with NCHL" on the NCHL transaction: refresh the status, then go back to the record,
+            // whose view shows the new status banner and response
+            if (context.request.parameters.resync === 'T') {
+                const rectype = context.request.parameters.rectype
+                const recid = context.request.parameters.recid
+                try {
+                    const refreshed = rdmod.refreshtranstatus(recid, context.request.parameters.token)
+                    redirect.toRecord({
+                        type: rectype,
+                        id: recid,
+                        parameters: {
+                            nchlresync: refreshed ? refreshed.status : 'NOT SUPPORTED',
+                            // the record escapes this text, so drop the <br/> separators gettranstatus puts between lines
+                            nchlresyncmsg: refreshed ? (refreshed.message || '').replace(/<br\/>/g, '; ')
+                                : 'NCHL has no status check for this payment type'
+                        }
+                    })
+                } catch (e) {
+                    log.error('NCHL_RESYNC_FAILED', {recid: recid, error: e.message})
+                    form.addPageInitMessage({
+                        message: message.create({
+                            type: message.Type.ERROR,
+                            title: 'Resync failed',
+                            message: e.message
+                        })
+                    })
+                    form.addField({
+                        id: 'custpage_back',
+                        label: 'Back',
+                        type: serverWidget.FieldType.INLINEHTML
+                    }).defaultValue = '<a href="' + url.resolveRecord({recordType: rectype, recordId: recid}) +
+                        '">Back to NCHL transaction</a>'
+                    context.response.writePage({pageObject: form})
+                }
+                return
+            }
 
             const tranRec = record.load({
                 type: context.request.parameters.rectype,
