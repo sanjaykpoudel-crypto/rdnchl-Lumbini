@@ -15,8 +15,16 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
      */
     function getcontrapayment(contraRecord) {
         const pmtType = contraRecord.getValue('custbody_nchl_payment_type')
-        const bankType = pmtType === '1' ? 'CIPS' : 'IPS'
         const lineCount = contraRecord.getLineCount({sublistId: 'line'})
+        let receivingLines = 0
+        for (let i = 0; i < lineCount; i++) {
+            if (contraRecord.getSublistValue({sublistId: 'line', fieldId: 'debit', line: i})) {
+                receivingLines++
+            }
+        }
+        // NCHL real time (CIPS) takes one payment per batch, so several receiving lines go as one non real time batch
+        const batchOnly = receivingLines > 1
+        const bankType = pmtType === '1' && !batchOnly ? 'CIPS' : 'IPS'
         let debtorBankDetails = null, creditTotal = 0
         const creditLines = [], problems = []
         for (let i = 0; i < lineCount; i++) {
@@ -45,7 +53,7 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
         if (creditLines.length === 0) {
             problems.push('No receiving (debit) bank lines')
         }
-        return {pmtType, bankType, debtorBankDetails, creditLines, creditTotal, problems}
+        return {pmtType, bankType, batchOnly, debtorBankDetails, creditLines, creditTotal, problems}
     }
 
     function showmessage(form, type, title, text) {
@@ -103,8 +111,13 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
                         label: 'Payment Type',
                         type: serverWidget.FieldType.SELECT
                     })
-                    paymentTypeField.addSelectOption({value: 'CIPS', text: 'Real-Time', isSelected: contra.pmtType === '1'})
-                    paymentTypeField.addSelectOption({value: 'IPS', text: 'Non-Real-Time', isSelected: contra.pmtType !== '1'})
+                    paymentTypeField.addSelectOption({value: 'CIPS', text: 'Real-Time', isSelected: contra.bankType === 'CIPS'})
+                    paymentTypeField.addSelectOption({value: 'IPS', text: 'Non-Real-Time', isSelected: contra.bankType === 'IPS'})
+                    if (contra.batchOnly && contra.pmtType === '1') {
+                        showmessage(form, message.Type.INFORMATION, 'Non-Real-Time batch',
+                            `NCHL real-time payments carry one payment per batch, so the ${contra.creditLines.length} receiving ` +
+                            'accounts are paid in one non-real-time batch. It settles later.')
+                    }
                     paymentTypeField.updateDisplayType({displayType: serverWidget.FieldDisplayType.DISABLED})
                     // inline select on the transaction list renders as a link to the voucher
                     const createdFromField = form.addField({

@@ -89,6 +89,22 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
         return {debtorBank, lines, total: Math.round(total * 100) / 100, problems}
     }
 
+    /**
+     * NCHL real time (CIPS) takes one payment per batch, so a journal paying several employees goes as one non real
+     * time (IPS) batch whatever was asked for
+     * @returns {{payType: string, salary: Object, batchOnly: boolean}}
+     */
+    function getsalarybatch(journal, requestedType) {
+        let payType = getpaytype(requestedType)
+        let salary = getsalarypayment(journal, payType)
+        const batchOnly = salary.lines.length > 1
+        if (batchOnly && payType === 'CIPS') {
+            payType = 'IPS'
+            salary = getsalarypayment(journal, payType)
+        }
+        return {payType, salary, batchOnly}
+    }
+
     function showmessage(form, type, title, text) {
         form.addPageInitMessage({message: message.create({type: type, title: title, message: text})})
     }
@@ -100,7 +116,6 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
     }
 
     function writepage(context, journal) {
-        const payType = getpaytype(context.request.parameters.ptype)
         const form = serverWidget.createForm({title: 'Salary Payment'})
         form.clientScriptModulePath = './suitelet_client.js'
         const blockReason = getblockreason(journal)
@@ -108,14 +123,14 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
             showmessage(form, message.Type.WARNING, blockReason.title, blockReason.message)
             return form
         }
-        const salary = getsalarypayment(journal, payType)
+        const {payType, salary, batchOnly} = getsalarybatch(journal, context.request.parameters.ptype)
         form.addField({id: 'custpage_journal', label: 'journal', type: serverWidget.FieldType.TEXT})
             .updateDisplayType({displayType: serverWidget.FieldDisplayType.HIDDEN})
             .defaultValue = journal.id
         // changing it reloads the page with that type's paying bank and employee accounts (suitelet_client.js)
         const payTypeField = form.addField({id: 'custpage_ptype', label: 'Payment Type', type: serverWidget.FieldType.SELECT})
         payTypeField.updateLayoutType({layoutType: serverWidget.FieldLayoutType.OUTSIDEABOVE})
-        Object.keys(PAY_TYPES).forEach(code => payTypeField.addSelectOption({
+        Object.keys(PAY_TYPES).filter(code => !batchOnly || code === 'IPS').forEach(code => payTypeField.addSelectOption({
             value: code,
             text: PAY_TYPES[code],
             isSelected: code === payType
@@ -167,14 +182,29 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
         const accountField = sublist.addField({id: 'custpage_cr_account', label: 'Pay To Account', type: serverWidget.FieldType.SELECT})
         accountField.updateDisplayType({displayType: serverWidget.FieldDisplayType.ENTRY})
         accountField.addSelectOption({value: '', text: ''})
+        // details of the chosen account: entry inputs, because NetSuite redraws only those when suitelet_client.js changes
+        // them; its pageInit makes them read-only, and POST ignores them
+        const ACCOUNT_COLUMNS = {
+            custpage_cr_bank: ['Bank', account => account.bank.text],
+            custpage_cr_branch: ['Branch', account => account.branch.text],
+            custpage_cr_ac_number: ['Account Number', account => account.accountNumber],
+            custpage_cr_ac_name: ['Account Name', account => account.accountName]
+        }
+        Object.keys(ACCOUNT_COLUMNS).forEach(fieldId => {
+            sublist.addField({id: fieldId, label: ACCOUNT_COLUMNS[fieldId][0], type: serverWidget.FieldType.TEXT})
+                .updateDisplayType({displayType: serverWidget.FieldDisplayType.ENTRY})
+        })
         sublist.addField({id: 'custpage_amount', label: 'Amount', type: serverWidget.FieldType.CURRENCY})
         sublist.addField({id: 'custpage_remarks', label: 'Remarks', type: serverWidget.FieldType.TEXT})
             .updateDisplayType({displayType: serverWidget.FieldDisplayType.ENTRY})
-        const added = new Set()
+        const accountDetails = {}
         salary.lines.forEach((line, index) => {
             line.accounts.forEach(account => {
-                if (!added.has(account.id)) {
-                    added.add(account.id)
+                if (!accountDetails[account.id]) {
+                    accountDetails[account.id] = Object.keys(ACCOUNT_COLUMNS).reduce((details, fieldId) => {
+                        details[fieldId] = ACCOUNT_COLUMNS[fieldId][1](account) || ''
+                        return details
+                    }, {})
                     accountField.addSelectOption({
                         value: account.id,
                         text: `${line.employeeName}: ${account.bank.text} - ${account.accountNumber} (${account.accountName})`
@@ -184,7 +214,14 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
             sublist.setSublistValue({id: 'custpage_line', line: index, value: String(line.line)})
             sublist.setSublistValue({id: 'custpage_employee', line: index, value: line.employeeName})
             if (line.accounts.length === 1) {
-                sublist.setSublistValue({id: 'custpage_cr_account', line: index, value: line.accounts[0].id})
+                const account = line.accounts[0]
+                sublist.setSublistValue({id: 'custpage_cr_account', line: index, value: account.id})
+                Object.keys(ACCOUNT_COLUMNS).forEach(fieldId => {
+                    const value = accountDetails[account.id][fieldId]
+                    if (value) {
+                        sublist.setSublistValue({id: fieldId, line: index, value: value})
+                    }
+                })
             }
             sublist.setSublistValue({id: 'custpage_amount', line: index, value: String(line.amount)})
             const remarks = line.memo || journal.getValue('memo')
@@ -192,9 +229,18 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
                 sublist.setSublistValue({id: 'custpage_remarks', line: index, value: remarks})
             }
         })
+        // read by suitelet_client.js to show the chosen account's details; POST reads the accounts again
+        form.addField({id: 'custpage_lines_accounts', label: 'account details', type: serverWidget.FieldType.LONGTEXT})
+            .updateDisplayType({displayType: serverWidget.FieldDisplayType.HIDDEN})
+            .defaultValue = JSON.stringify(accountDetails)
         if (salary.problems.length > 0) {
             showmessage(form, message.Type.ERROR, 'Cannot pay this journal', salary.problems.join('<br>'))
         } else {
+            if (batchOnly) {
+                showmessage(form, message.Type.INFORMATION, 'Non-Real-Time batch',
+                    `NCHL real-time payments carry one payment per batch, so the ${salary.lines.length} employees are paid in one ` +
+                    'non-real-time batch. It settles later; the NCHL transaction shows the result for each employee.')
+            }
             form.addSubmitButton({label: 'Make Payment'})
         }
         return form
@@ -214,8 +260,7 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
             showmessage(form, message.Type.WARNING, blockReason.title, blockReason.message)
             return form
         }
-        const payType = getpaytype(request.parameters.custpage_ptype)
-        const salary = getsalarypayment(journal, payType)
+        const {payType, salary} = getsalarybatch(journal, request.parameters.custpage_ptype)
         const chosen = {}
         for (let x = 0; x < request.getLineCount({group: 'custpage_lines'}); x++) {
             const formValue = name => request.getSublistValue({group: 'custpage_lines', name: name, line: x})

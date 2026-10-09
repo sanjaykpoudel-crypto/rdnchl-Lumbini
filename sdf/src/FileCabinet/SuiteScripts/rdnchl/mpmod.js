@@ -71,7 +71,7 @@ define(['N/search', './rdmodule'], function (search, rdmodu) {
          * Active, NCHL-verified bank accounts of several payees in one search
          * @param {string[]} entityids
          * @returns {Object<string, {CIPS: Object[], IPS: Object[]}>} accounts by entity id and payment type,
-         *     in the shape of rdmodule.getpayeeaccounts
+         *     in the shape of rdmodule.getpayeeaccounts (IPS includes CIPS accounts)
          */
         getpayeeaccountmap: function (entityids) {
             const map = {}
@@ -96,6 +96,7 @@ define(['N/search', './rdmodule'], function (search, rdmodu) {
                 if (map[entityId][type]) {
                     map[entityId][type].push({
                         id: result.id,
+                        type: type,
                         name: result.getValue('name'),
                         bank: JSON.parse(result.getValue('custrecord_rdnchl_bank_prop') || '{}'),
                         branch: JSON.parse(result.getValue('custrecord_rdnchl_bank_branch_prop') || '{}'),
@@ -104,6 +105,10 @@ define(['N/search', './rdmodule'], function (search, rdmodu) {
                     })
                 }
                 return true
+            })
+            // same rule as rdmodule.getpayeeaccounts: a non real time payment can use CIPS bank details too
+            Object.keys(map).forEach(entityId => {
+                map[entityId].IPS = rdmodu.uniqueaccounts(map[entityId].IPS.concat(map[entityId].CIPS), 'IPS')
             })
             return map
         }

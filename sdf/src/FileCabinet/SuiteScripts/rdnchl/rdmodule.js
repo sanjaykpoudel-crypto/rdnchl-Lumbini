@@ -166,17 +166,18 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                     filters: [
                         ['custrecord_nchl_bank_entity', 'anyof', entityid],
                         'AND',
-                        ['custrecord_nchl_bank_type', 'is', type],
+                        this.banktypefilter(type),
                         'AND',
                         ['custrecord_nchl_account_verified', 'is', 'T'],
                         'AND',
                         ['isinactive', 'is', 'F']
                     ],
-                    columns: ['name', 'custrecord_rdnchl_bank_prop', 'custrecord_rdnchl_bank_branch_prop',
+                    columns: ['name', 'custrecord_nchl_bank_type', 'custrecord_rdnchl_bank_prop', 'custrecord_rdnchl_bank_branch_prop',
                         'custrecord_rdnchl_account_name', 'custrecord_rdnchl_account_number']
                 }).run().each(result => {
                     accounts.push({
                         id: result.id,
+                        type: result.getValue('custrecord_nchl_bank_type'),
                         name: result.getValue('name'),
                         bank: JSON.parse(result.getValue('custrecord_rdnchl_bank_prop') || '{}'),
                         branch: JSON.parse(result.getValue('custrecord_rdnchl_bank_branch_prop') || '{}'),
@@ -185,7 +186,33 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                     })
                     return true
                 })
-                return accounts
+                return this.uniqueaccounts(accounts, type)
+            },
+            /**
+             * Bank detail types that can receive a payment of this type: real time (CIPS) needs a bank on NCHL's CIPS
+             * list; non real time (IPS) reaches any account, and NCHL uses the same bank codes on both lists
+             * @param {string} type CIPS or IPS
+             */
+            banktypefilter: function (type) {
+                return type === 'IPS'
+                    ? [['custrecord_nchl_bank_type', 'is', 'IPS'], 'OR', ['custrecord_nchl_bank_type', 'is', 'CIPS']]
+                    : ['custrecord_nchl_bank_type', 'is', 'CIPS']
+            },
+            /**
+             * One entry per real account when it is saved both as a CIPS and an IPS bank detail, keeping the one of the
+             * payment's own type
+             * @param {{type: string, bank: Object, accountNumber: string}[]} accounts
+             * @param {string} type CIPS or IPS
+             */
+            uniqueaccounts: function (accounts, type) {
+                const byAccount = {}
+                accounts.forEach(account => {
+                    const key = `${account.bank.value}|${account.accountNumber}`
+                    if (!byAccount[key] || (account.type === type && byAccount[key].type !== type)) {
+                        byAccount[key] = account
+                    }
+                })
+                return accounts.filter(account => byAccount[`${account.bank.value}|${account.accountNumber}`] === account)
             },
             /**
              * Which of the given entities are employees
@@ -663,10 +690,14 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 const coaBank = search.lookupFields({
                     type: search.Type.ACCOUNT,
                     id: coaid,
-                    columns: [relatedBankField]
+                    columns: ['custrecord_rdnchl_coa_bank_detail', 'custrecord_ips_bank']
                 })
                 log.debug('COABANK', coaBank)
-                const linkedBank = coaBank[relatedBankField]
+                let linkedBank = coaBank[relatedBankField]
+                if (bankType === 'IPS' && (!linkedBank || linkedBank.length === 0)) {
+                    // a non real time payment can use the account's CIPS bank detail (same bank codes on both lists)
+                    linkedBank = coaBank.custrecord_rdnchl_coa_bank_detail
+                }
                 if (!linkedBank || linkedBank.length === 0) {
                     throw error.create({
                         name: 'NCHL_COA_BANK_MISSING',
