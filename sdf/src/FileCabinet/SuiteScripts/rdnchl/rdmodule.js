@@ -3,40 +3,118 @@
  */
 define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 'N/crypto/certificate', 'N/error'],
     function (http, encode, npiconf, cache, search, record, certificate, error) {
+        const TOKEN_CACHE = 'LC_NCHL_TOKENS'
+        const LIST_CACHE = 'LC_NCHL_LISTS'
+        const REFRESH_TOKEN_MS = 12 * 60 * 60 * 1000
+        // renew a little early so a token does not expire while a request is on its way
+        const TOKEN_MARGIN_MS = 30 * 1000
+
+        /**
+         * POST to NCHL's /oauth/token with the client's Basic credentials
+         * @param {Object} body form fields
+         * @returns {Object} NCHL's answer
+         * @throws NPI_TOKEN_HTTP_<status> when NCHL answers with an error status
+         */
+        function requesttoken(body) {
+            // Basic auth requires standard base64; the URL-safe alphabet changes '+' and '/'
+            const b64basic = encode.convert({
+                string: npiconf.USERNAME + ':' + npiconf.PASSWORD,
+                inputEncoding: encode.Encoding.UTF_8,
+                outputEncoding: encode.Encoding.BASE_64
+            })
+            const response = http.request({
+                method: http.Method.POST,
+                url: npiconf.HOST + '/oauth/token',
+                headers: {
+                    'Authorization': 'Basic ' + b64basic,
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: body
+            })
+            if (response.code !== 200) {
+                throw error.create({
+                    name: `NPI_TOKEN_HTTP_${response.code}`,
+                    message: `NCHL ${body.grant_type} token request failed with HTTP ${response.code}: ${response.body}`
+                })
+            }
+            return JSON.parse(response.body)
+        }
+
+        function readcached(store, key) {
+            const value = store.get({key: key})
+            return value ? JSON.parse(value) : null
+        }
+
+        /**
+         * @returns {{token: string, expiresAt: number}} what was cached
+         */
+        function savecached(store, key, token, lifetimeMs) {
+            const entry = {token: token, expiresAt: Date.now() + lifetimeMs}
+            // N/cache keeps an entry at least 300 seconds; expiresAt decides whether it is still usable
+            store.put({key: key, value: JSON.stringify(entry), ttl: Math.max(300, Math.floor(lifetimeMs / 1000))})
+            return entry
+        }
+
+        /**
+         * NCHL lists change rarely; keep them 12 hours so forms do not wait for NCHL on every change.
+         * Empty answers (NCHL unreachable) are not kept.
+         */
+        function cachedlist(key, load) {
+            const store = cache.getCache({name: LIST_CACHE, scope: cache.Scope.PROTECTED})
+            const cached = store.get({key: key})
+            if (cached) {
+                return JSON.parse(cached)
+            }
+            const list = load() || []
+            if (list.length > 0) {
+                store.put({key: key, value: JSON.stringify(list), ttl: 12 * 60 * 60})
+            }
+            return list
+        }
 
         return {
             // NCHL categoryPurpose codes offered on the payment pages
             categorypurposes: {CUST: 'Customer Payment', SUPP: 'Supplier Payment'},
+            /**
+             * NCHL access token, kept in a server cache shared by all scripts. NCHL's rules: the password grant only
+             * yields a refresh token (its access token must not be used); a refresh token lasts 12 hours and buys
+             * access tokens that last 300 seconds; a refresh rejected with HTTP 400 means logging in again.
+             * @returns {string} JSON {access_token}, the shape callers already parse
+             */
             generatetoken: function () {
                 try {
-                    // Basic auth requires standard base64; the URL-safe alphabet changes '+' and '/'
-                    const b64basic = encode.convert({
-                        string: npiconf.USERNAME + ':' + npiconf.PASSWORD,
-                        inputEncoding: encode.Encoding.UTF_8,
-                        outputEncoding: encode.Encoding.BASE_64
-                    })
-                    const reqHeaders = {
-                        "Authorization": 'Basic ' + b64basic,
-                        "Content-Type": "application/x-www-form-urlencoded"
+                    const store = cache.getCache({name: TOKEN_CACHE, scope: cache.Scope.PROTECTED})
+                    const now = Date.now()
+                    const access = readcached(store, 'access')
+                    if (access && access.expiresAt - TOKEN_MARGIN_MS > now) {
+                        return JSON.stringify({access_token: access.token})
                     }
-                    const postBody = {
-                        "grant_type": "password",
-                        "username": npiconf.USERID,
-                        "password": npiconf.USERPASS
+                    let refresh = readcached(store, 'refresh')
+                    if (!refresh || refresh.expiresAt - TOKEN_MARGIN_MS <= now) {
+                        refresh = this.loginnchl(store)
+                        if (!refresh) {
+                            return JSON.stringify({access_token: readcached(store, 'access').token})
+                        }
                     }
-                    const response = http.request({
-                        method: http.Method.POST,
-                        url: npiconf.HOST + '/oauth/token',
-                        headers: reqHeaders,
-                        body: postBody
-                    })
-                    if (response.code !== 200) {
-                        throw error.create({
-                            name: 'NPI_TOKEN_ERROR',
-                            message: 'NPI token request failed with HTTP ' + response.code + ': ' + response.body
-                        })
+                    let granted
+                    try {
+                        granted = requesttoken({grant_type: 'refresh_token', refresh_token: refresh.token})
+                    } catch (e) {
+                        if (e.name !== 'NPI_TOKEN_HTTP_400') {
+                            throw e
+                        }
+                        // refresh token expired or revoked before its 12 hours: log in again
+                        refresh = this.loginnchl(store)
+                        if (!refresh) {
+                            return JSON.stringify({access_token: readcached(store, 'access').token})
+                        }
+                        granted = requesttoken({grant_type: 'refresh_token', refresh_token: refresh.token})
                     }
-                    return response.body
+                    if (granted.refresh_token && granted.refresh_token !== refresh.token) {
+                        savecached(store, 'refresh', granted.refresh_token, REFRESH_TOKEN_MS)
+                    }
+                    savecached(store, 'access', granted.access_token, (granted.expires_in || 300) * 1000)
+                    return JSON.stringify({access_token: granted.access_token})
                 } catch (e) {
                     log.error({
                         title: 'GEN_TOKEN_FN_ERROR',
@@ -45,7 +123,38 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                     throw e
                 }
             },
+            /**
+             * Password grant: keeps only the refresh token
+             */
+            loginnchl: function (store) {
+                const login = requesttoken({grant_type: 'password', username: npiconf.USERID, password: npiconf.USERPASS})
+                if (login.refresh_token) {
+                    return savecached(store, 'refresh', login.refresh_token, REFRESH_TOKEN_MS)
+                }
+                // not what NCHL documents; keep payments working with the login's access token and make it visible
+                log.error('NPI_NO_REFRESH_TOKEN', {fields: Object.keys(login)})
+                savecached(store, 'access', login.access_token, (login.expires_in || 300) * 1000)
+                return null
+            },
+            /**
+             * Drops the cached access token, e.g. after NCHL answered 401 with it
+             */
+            forgetaccesstoken: function () {
+                cache.getCache({name: TOKEN_CACHE, scope: cache.Scope.PROTECTED}).remove({key: 'access'})
+            },
+            /**
+             * NCHL bank list for CIPS or IPS, kept 12 hours
+             */
             getbanklist: function (option) {
+                return cachedlist(`banks_${option.type}`, () => this.fetchbanklist(option))
+            },
+            /**
+             * Branches of one bank, kept 12 hours
+             */
+            getbankbranchlist: function (option) {
+                return cachedlist(`branches_${option.bankId}`, () => this.fetchbankbranchlist(option))
+            },
+            fetchbanklist: function (option) {
                 try {
                     const apiAuth = JSON.parse(this.generatetoken())
                     const uri = option.type === 'CIPS' ? '/api/getcipsbanklist' : '/api/getbanklist'
@@ -78,7 +187,7 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                     return []
                 }
             },
-            getbankbranchlist: function (option) {
+            fetchbankbranchlist: function (option) {
                 try {
                     const apiAuth = JSON.parse(this.generatetoken())
                     const response = http.request({
@@ -325,6 +434,18 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
              * @returns {http.ClientResponse}
              */
             callnchl: function (option) {
+                const response = this.sendnchl(option)
+                if (response.code === 401 && !option.token) {
+                    // the cached access token was no longer accepted: get a fresh one and send once more
+                    this.forgetaccesstoken()
+                    return this.sendnchl(option)
+                }
+                return response
+            },
+            /**
+             * One attempt of callnchl, logged
+             */
+            sendnchl: function (option) {
                 const request = {
                     url: npiconf.HOST + option.path,
                     headers: {'content-type': 'application/json', 'accept': '*/*'},
