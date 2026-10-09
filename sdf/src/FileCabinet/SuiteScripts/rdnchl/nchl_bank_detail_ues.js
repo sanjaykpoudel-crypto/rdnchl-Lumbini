@@ -20,13 +20,24 @@ define(['N/ui/serverWidget', './rdmodule', 'N/error'], function (serverWidget, r
         const accountNumber = rec.getValue('custrecord_rdnchl_account_number')
         const accountName = rec.getValue('custrecord_rdnchl_account_name')
         const result = rdmodu.verifyaccount({bankId: bankProp.value, accountNumber: accountNumber, accountName: accountName})
-        log.audit('NCHL_ACCOUNT_VERIFY', {account: accountNumber, match: result.matchPercentate})
-        if (result.matchPercentate !== 100) {
+        // NCHL's samples spell it matchPercentate, its field table matchPercentage
+        const match = result.matchPercentate !== undefined ? result.matchPercentate : result.matchPercentage
+        log.audit('NCHL_ACCOUNT_VERIFY', {account: accountNumber, match: match, branchId: result.branchId})
+        if (match !== 100) {
             throw error.create({
                 name: 'NCHL_ACCOUNT_NOT_VERIFIED',
                 message: `NCHL could not verify account ${accountNumber} (${accountName}) at ${bankProp.text}: ` +
                     (result.responseMessage || `name match ${result.matchPercentate}%`),
                 notifyOff: true
+            })
+        }
+        // the account's real branch comes with the check; keep the record in line with it
+        const savedBranch = JSON.parse(rec.getValue('custrecord_rdnchl_bank_branch_prop') || '{}')
+        if (result.branchId && String(savedBranch.value) !== String(result.branchId)) {
+            const branch = rdmodu.getbankbranchlist({bankId: bankProp.value}).find(b => String(b.branchId) === String(result.branchId))
+            rec.setValue({
+                fieldId: 'custrecord_rdnchl_bank_branch_prop',
+                value: JSON.stringify({value: result.branchId, text: branch ? branch.branchName : result.branchId})
             })
         }
         rec.setValue({fieldId: 'custrecord_nchl_account_verified', value: true})
