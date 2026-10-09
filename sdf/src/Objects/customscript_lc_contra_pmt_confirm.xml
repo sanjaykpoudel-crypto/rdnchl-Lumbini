@@ -18,7 +18,7 @@
       <isonline>F</isonline>
       <loglevel>DEBUG</loglevel>
       <runasrole></runasrole>
-      <status>TESTING</status>
+      <status>RELEASED</status>
       <title>contra payment confirm page</title>
     </scriptdeployment>
   </scriptdeployments>

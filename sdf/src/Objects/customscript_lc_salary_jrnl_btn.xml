@@ -20,7 +20,7 @@
       <loglevel>DEBUG</loglevel>
       <recordtype>JOURNALENTRY</recordtype>
       <runasrole></runasrole>
-      <status>TESTING</status>
+      <status>RELEASED</status>
     </scriptdeployment>
   </scriptdeployments>
 </usereventscript>
