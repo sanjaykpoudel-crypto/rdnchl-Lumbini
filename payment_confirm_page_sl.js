@@ -2,37 +2,71 @@
  * @NApiVersion 2.1
  * @NScriptType Suitelet
  */
-define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', 'N/redirect', 'N/ui/message'], function (serverWidget, record, rdmodu, search, config, redirect, message) {
+define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', 'N/redirect', 'N/ui/message', 'N/error'], function (serverWidget, record, rdmodu, search, config, redirect, message, error) {
+    // This page runs as administrator, so it only pays the record types its Pay Online button is deployed on
+    const PAYABLE_TYPES = ['vendorpayment', 'vendorprepayment']
+
+    function loadpayable(type, id) {
+        if (!PAYABLE_TYPES.includes(type)) {
+            throw error.create({name: 'NCHL_RECORD_TYPE', message: `Online payment is not available for ${type}`, notifyOff: true})
+        }
+        return record.load({type: type, id: id})
+    }
+
+    function getpaytype(tranRecord) {
+        return tranRecord.getValue('custbody_nchl_payment_type') === '2' ? 'IPS' : 'CIPS'
+    }
+
+    function getpayamount(tranRecord) {
+        return tranRecord.type === 'vendorpayment' ? tranRecord.getValue('total') : tranRecord.getValue('payment')
+    }
+
+    /**
+     * Same conditions as the Pay Online button, checked again because this page can be opened or submitted directly
+     * @returns {{title: string, message: string, activeTran: Object}|null} why the record cannot be paid
+     */
+    function getblockreason(tranRecord) {
+        const activeTran = rdmodu.getactivenchltran(tranRecord.id)
+        if (activeTran) {
+            return {
+                title: 'Payment already submitted',
+                message: `NCHL transaction ${activeTran.name} for this record is ${activeTran.status}. Check its status instead of paying again.`,
+                activeTran: activeTran
+            }
+        }
+        if (tranRecord.getValue('custbody_rdnchl_paid_online')) {
+            return {title: 'Payment already submitted', message: 'This record is already marked as paid online.'}
+        }
+        if (tranRecord.getValue('approvalstatus') !== '2') {
+            return {title: 'Not approved', message: 'Only approved payments can be paid online.'}
+        }
+        return null
+    }
+
+    function writemessage(context, form, title, text) {
+        form.addPageInitMessage({message: message.create({type: message.Type.WARNING, title: title, message: text})})
+        context.response.writePage({pageObject: form})
+    }
+
     return {
         onRequest: context => {
             const form = serverWidget.createForm({title: 'Confirm Payment Detail'})
             form.clientScriptModulePath = './suitelet_client.js'
             if (context.request.method === 'GET') {
-                const tranRecord = record.load({
-                    type: context.request.parameters.recordtype,
-                    id: context.request.parameters.recordid
-                })
-                const activeTran = rdmodu.getactivenchltran(context.request.parameters.recordid)
-                if (tranRecord.getValue('custbody_rdnchl_paid_online') || activeTran) {
-                    form.addPageInitMessage({
-                        message: message.create({
-                            type: message.Type.WARNING,
-                            title: 'Payment already submitted',
-                            message: activeTran
-                                ? `NCHL transaction ${activeTran.name} for this record is ${activeTran.status}. Check its status instead of paying again.`
-                                : 'This record is already marked as paid online.'
-                        })
-                    })
-                    context.response.writePage({pageObject: form})
+                const tranRecord = loadpayable(context.request.parameters.recordtype, context.request.parameters.recordid)
+                const blockReason = getblockreason(tranRecord)
+                if (blockReason) {
+                    writemessage(context, form, blockReason.title, blockReason.message)
                     return
                 }
+                const payType = getpaytype(tranRecord)
                 form.addField({
                     id: 'custpage_parentrecord',
                     label: 'parent record',
                     type: serverWidget.FieldType.LONGTEXT,
                 }).updateDisplayType({displayType: 'hidden'}).defaultValue = JSON.stringify({
-                    type: context.request.parameters.recordtype,
-                    id: context.request.parameters.recordid
+                    type: tranRecord.type,
+                    id: tranRecord.id
                 })
                 const ptypeField = form.addField({
                     id: 'custpage_ptype',
@@ -44,14 +78,24 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', '
                 ptypeField.addSelectOption({
                     value: 'IPS',
                     text: 'Non-Realtime Payment',
-                    isSelected: context.request.parameters.ptype === 'IPS'
+                    isSelected: payType === 'IPS'
                 })
                 ptypeField.addSelectOption({
                     value: 'CIPS',
                     text: 'Realtime Payment',
-                    isSelected: context.request.parameters.ptype === 'CIPS'
+                    isSelected: payType === 'CIPS'
                 })
                 form.addFieldGroup({id: 'primaryinformation', label: 'PRIMARY INFORMATION'})
+                // inline select on the transaction list renders as a link to the payment
+                const createdFromField = form.addField({
+                    id: 'custpage_created_from',
+                    label: 'Created From',
+                    type: serverWidget.FieldType.SELECT,
+                    source: 'transaction',
+                    container: 'primaryinformation'
+                })
+                createdFromField.updateDisplayType({displayType: serverWidget.FieldDisplayType.INLINE})
+                createdFromField.defaultValue = tranRecord.id
                 form.addField({
                     id: 'custpage_document_number',
                     label: 'document number',
@@ -75,17 +119,22 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', '
                 const categoryPurposeField = form.addField({
                     id: 'custpage_category_purpose',
                     label: 'category purpose',
-                    type: serverWidget.FieldType.TEXT,
+                    type: serverWidget.FieldType.SELECT,
                     container: 'primaryinformation'
                 })
-                categoryPurposeField.defaultValue = 'CUST'
+                categoryPurposeField.isMandatory = true
+                Object.keys(rdmodu.categorypurposes).forEach(code => categoryPurposeField.addSelectOption({
+                    value: code,
+                    text: `${code} - ${rdmodu.categorypurposes[code]}`,
+                    isSelected: code === 'CUST'
+                }))
                 form.addField({
                     id: 'custpage_amount',
                     label: 'amount',
                     type: serverWidget.FieldType.CURRENCY,
                     container: 'primaryinformation'
                 }).updateDisplayType({displayType: serverWidget.FieldDisplayType.INLINE})
-                    .defaultValue = context.request.parameters.recordtype === 'vendorpayment' ? tranRecord.getValue('total') : tranRecord.getValue('payment')
+                    .defaultValue = getpayamount(tranRecord)
                 const coaid = tranRecord.getValue('account')
                 /*const coaBank = search.lookupFields({
                     type: search.Type.ACCOUNT,
@@ -104,8 +153,7 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', '
                         'custrecord_rdnchl_account_number'
                     ]
                 })*/
-                const bankType = context.request.parameters.ptype
-                const bankDetailRecord = rdmodu.getcoabankdetail(coaid, bankType)
+                const bankDetailRecord = rdmodu.getcoabankdetail(coaid, payType)
                 form.addFieldGroup({
                     id: 'debtor',
                     label: 'DEBIT DETAIL'
@@ -144,37 +192,59 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', '
                     id: 'creditor',
                     label: 'CREDIT DETAIL'
                 })
-                const crBankRecordId = tranRecord.getValue('custbody_rdnchl_bank')
-                if (crBankRecordId) {
-                    const crBankDetail = rdmodu.getbankdetail(crBankRecordId)
-                    const crBankField = form.addField({
-                        id: 'custpage_cr_bank',
-                        label: 'credit bank',
+                // The payee account is chosen here; the server reads its details again on submit (see POST)
+                let canPay = true
+                const isBillerPayment = tranRecord.getValue('custbody_ird_voucher_no') || tranRecord.getValue('custbody_npi_request_body')
+                if (!isBillerPayment) {
+                    const payeeAccounts = rdmodu.getpayeeaccounts(tranRecord.getValue('entity'), payType)
+                    if (payeeAccounts.length === 0) {
+                        canPay = false
+                        form.addPageInitMessage({
+                            message: message.create({
+                                type: message.Type.WARNING,
+                                title: 'No verified bank account',
+                                message: `${tranRecord.getText('entity')} has no NCHL-verified ${payType === 'CIPS' ? 'real time' : 'non real time'} ` +
+                                    'bank account. Add one (or open and save the existing one so NCHL verifies it), then pay again.'
+                            })
+                        })
+                    }
+                    const savedAccountId = String(tranRecord.getValue('custbody_rdnchl_bank') || '')
+                    const selected = payeeAccounts.find(account => account.id === savedAccountId) ||
+                        (payeeAccounts.length === 1 ? payeeAccounts[0] : null)
+                    const crAccountField = form.addField({
+                        id: 'custpage_cr_account',
+                        label: 'Pay To Account',
                         type: serverWidget.FieldType.SELECT,
                         container: 'creditor'
                     })
-                    crBankField.addSelectOption(JSON.parse(crBankDetail.custrecord_rdnchl_bank_prop))
-                    const crBankBranchField = form.addField({
-                        id: 'custpage_cr_bank_branch',
-                        label: 'Bank Branch',
-                        type: serverWidget.FieldType.SELECT,
-                        container: 'creditor'
+                    crAccountField.isMandatory = true
+                    crAccountField.addSelectOption({value: '', text: ''})
+                    payeeAccounts.forEach(account => crAccountField.addSelectOption({
+                        value: account.id,
+                        text: `${account.bank.text} - ${account.accountNumber} (${account.accountName})`,
+                        isSelected: !!selected && account.id === selected.id
+                    }))
+                    // read by suitelet_client.js to show the chosen account's details
+                    form.addField({
+                        id: 'custpage_cr_accounts',
+                        label: 'payee accounts',
+                        type: serverWidget.FieldType.LONGTEXT
+                    }).updateDisplayType({displayType: 'hidden'}).defaultValue = JSON.stringify(payeeAccounts)
+                    const crDetail = {
+                        custpage_cr_bank: ['Bank', selected ? selected.bank.text : ''],
+                        custpage_cr_bank_branch: ['Bank Branch', selected ? selected.branch.text : ''],
+                        custpage_cr_bank_ac_name: ['Bank Account Name', selected ? selected.accountName : ''],
+                        custpage_cr_bank_ac_number: ['Bank Account Number', selected ? selected.accountNumber : '']
+                    }
+                    Object.keys(crDetail).forEach(fieldId => {
+                        form.addField({
+                            id: fieldId,
+                            label: crDetail[fieldId][0],
+                            type: serverWidget.FieldType.TEXT,
+                            container: 'creditor'
+                        }).updateDisplayType({displayType: serverWidget.FieldDisplayType.INLINE})
+                            .defaultValue = crDetail[fieldId][1]
                     })
-                    crBankBranchField.addSelectOption(JSON.parse(crBankDetail.custrecord_rdnchl_bank_branch_prop))
-                    form.addField({
-                        id: 'custpage_cr_bank_ac_name',
-                        label: 'Bank Account Name',
-                        type: serverWidget.FieldType.TEXT,
-                        container: 'creditor'
-                    }).updateDisplayType({displayType: serverWidget.FieldDisplayType.INLINE})
-                        .defaultValue = crBankDetail.custrecord_rdnchl_account_name
-                    form.addField({
-                        id: 'custpage_cr_bank_ac_number',
-                        label: 'bank account number',
-                        type: serverWidget.FieldType.TEXT,
-                        container: 'creditor'
-                    }).updateDisplayType({displayType: serverWidget.FieldDisplayType.INLINE})
-                        .defaultValue = crBankDetail.custrecord_rdnchl_account_number
                 }
                 const irdVoucher = tranRecord.getValue({fieldId: 'custbody_ird_voucher_no'})
                 const docReqBody = tranRecord.getValue({fieldId: 'custbody_npi_request_body'})
@@ -242,28 +312,42 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', '
                         log.error({title: 'ERROR', details: e})
                     }
                 }
-                form.addSubmitButton({label: 'Make Payment'})
+                if (canPay) {
+                    form.addSubmitButton({label: 'Make Payment'})
+                }
             } else if (context.request.method === 'POST') {
                 const requestParams = context.request.parameters
+                const parentProp = JSON.parse(requestParams.custpage_parentrecord)
+                const tranRecord = loadpayable(parentProp.type, parentProp.id)
                 // Re-check on submit: the form may have been opened twice or submitted twice
-                const activeTran = rdmodu.getactivenchltran(JSON.parse(requestParams.custpage_parentrecord).id)
-                if (activeTran) {
+                const blockReason = getblockreason(tranRecord)
+                if (blockReason && blockReason.activeTran) {
                     redirect.toRecord({
                         type: 'customrecord_nchl_transaction',
-                        id: activeTran.id
+                        id: blockReason.activeTran.id
                     })
                     return
                 }
+                if (blockReason) {
+                    writemessage(context, form, blockReason.title, blockReason.message)
+                    return
+                }
+                // Amount and bank accounts come from NetSuite, not from the submitted form, so they cannot be altered in the browser
+                const payType = getpaytype(tranRecord)
+                const debitBank = rdmodu.getcoabankdetail(tranRecord.getValue('account'), payType)
+                const purpose = rdmodu.categorypurposes.hasOwnProperty(requestParams.custpage_category_purpose)
+                    ? requestParams.custpage_category_purpose : 'CUST'
                 const params = {
-                    paymenttype: requestParams.custpage_ptype,
-                    amount: requestParams.custpage_amount,
-                    purpose: requestParams.custpage_category_purpose,
-                    drbank: requestParams.custpage_dr_bank,
-                    drbankbranch: requestParams.custpage_dr_bank_branch,
-                    draccountname: requestParams.custpage_dr_bank_ac_name,
-                    draccount: requestParams.custpage_dr_bank_ac_number,
+                    paymenttype: payType,
+                    amount: getpayamount(tranRecord),
+                    purpose: purpose,
+                    drbank: JSON.parse(debitBank.custrecord_rdnchl_bank_prop).value,
+                    drbankbranch: JSON.parse(debitBank.custrecord_rdnchl_bank_branch_prop).value,
+                    draccountname: debitBank.custrecord_rdnchl_account_name,
+                    draccount: debitBank.custrecord_rdnchl_account_number,
                     remarks: requestParams.custpage_memo
                 }
+                let payeeAccount = null
                 if (requestParams.hasOwnProperty('custpage_appid') && requestParams.hasOwnProperty('custpage_particulars')) {
                     params.billertype = 'IRD' //Inland Revenue Department
                     params.appId = requestParams.custpage_appid
@@ -280,17 +364,33 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', '
                     params.freeCode1 = docDetail.freeCode1
                     params.freeCode2 = docDetail.freeCode2
                 } else {
-                    params.crbank = requestParams.custpage_cr_bank
-                    params.crbankbranch = requestParams.custpage_cr_bank_branch
-                    params.craccountname = requestParams.custpage_cr_bank_ac_name
-                    params.craccount = requestParams.custpage_cr_bank_ac_number
-                  params.endtoendid = (requestParams.custpage_document_number + requestParams.custpage_entity).replace(/\s/g, '')
+                    // only an active, verified account of this payee and payment type is accepted
+                    payeeAccount = rdmodu.getpayeeaccounts(tranRecord.getValue('entity'), payType)
+                        .find(account => account.id === requestParams.custpage_cr_account)
+                    if (!payeeAccount) {
+                        writemessage(context, form, 'Choose a bank account',
+                            'The selected account is not a verified bank account of this payee. Go back and choose another.')
+                        return
+                    }
+                    params.crbank = payeeAccount.bank.value
+                    params.crbankbranch = payeeAccount.branch.value
+                    params.craccountname = payeeAccount.accountName
+                    params.craccount = payeeAccount.accountNumber
+                    params.endtoendid = (tranRecord.getValue('tranid') + tranRecord.getText('entity')).replace(/\s/g, '')
                 }
+                const relRecProp = {type: tranRecord.type, id: tranRecord.id}
                 const nchlTranRecord = rdmodu.savenchltran({
-                    relrecord: requestParams.custpage_parentrecord,
+                    relrecord: JSON.stringify(relRecProp),
                     params: params
                 })
-                const relRecProp = JSON.parse(requestParams.custpage_parentrecord)
+                if (nchlTranRecord && payeeAccount) {
+                    // keep the paid-to account on the payment for audit
+                    rdmodu.updaterelrecord({
+                        type: relRecProp.type,
+                        id: relRecProp.id,
+                        values: {custbody_rdnchl_bank: payeeAccount.id}
+                    })
+                }
                 if (nchlTranRecord && params.hasOwnProperty('refId') && params.hasOwnProperty('appId')) {
                     const lodgeResponse = rdmodu.processbill({nchltranrecid: nchlTranRecord, reqtype: 'lodge'})
                     const devhtmlfield = form.addField({

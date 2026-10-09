@@ -1,0 +1,25 @@
+<suitelet scriptid="customscript_lc_salary_jrnl_pay">
+  <description></description>
+  <isinactive>F</isinactive>
+  <name>LC salary journal payment page</name>
+  <notifyadmins>F</notifyadmins>
+  <notifyemails></notifyemails>
+  <notifyowner>T</notifyowner>
+  <notifyuser>F</notifyuser>
+  <scriptfile>[/SuiteScripts/rdnchl/bulkpayment_confirm_page_sl.js]</scriptfile>
+  <scriptdeployments>
+    <scriptdeployment scriptid="customdeploy_lc_salary_jrnl_pay">
+      <allemployees>F</allemployees>
+      <allpartners>F</allpartners>
+      <allroles>T</allroles>
+      <audslctrole></audslctrole>
+      <eventtype></eventtype>
+      <isdeployed>T</isdeployed>
+      <isonline>F</isonline>
+      <loglevel>DEBUG</loglevel>
+      <runasrole></runasrole>
+      <status>TESTING</status>
+      <title>salary journal payment page</title>
+    </scriptdeployment>
+  </scriptdeployments>
+</suitelet>

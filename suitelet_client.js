@@ -2,30 +2,30 @@
  * @NApiVersion 2.1
  * @NScriptType Clientscript
  */
-define(['N/search'], function (search) {
+define([], function () {
     return {
         fieldChanged: function (context) {
-            console.log(context.fieldId)
-            if(context.fieldId === 'custpage_cr_account') {
-                const recordid = context.currentRecord.getValue(context.fieldId)
-                const bankRecord = search.lookupFields({
-                    type: 'customrecord_rd_nchl_bank_detail',
-                    id: recordid,
-                    columns: ['custrecord_rdnchl_bank_prop', 'custrecord_rdnchl_bank_branch_prop', 'custrecord_rdnchl_account_name', 'custrecord_rdnchl_account_number']
-                })
-                const bankField = context.currentRecord.getField({fieldId: 'custpage_cr_bank'})
-                bankField.removeSelectOption({value: null})
-                bankField.insertSelectOption(JSON.parse(bankRecord.custrecord_rdnchl_bank_prop))
-                const bankBranchField = context.currentRecord.getField({fieldId: 'custpage_cr_bank_branch'})
-                bankBranchField.removeSelectOption({value: null})
-                bankBranchField.insertSelectOption(JSON.parse(bankRecord.custrecord_rdnchl_bank_branch_prop))
-                context.currentRecord.setValue({
-                    fieldId: 'custpage_cr_bank_ac_name',
-                    value: bankRecord.custrecord_rdnchl_account_name
-                })
-                context.currentRecord.setValue({
-                    fieldId: 'custpage_cr_bank_ac_number',
-                    value: bankRecord.custrecord_rdnchl_account_number
+            if (context.fieldId === 'custpage_ptype' && !context.sublistId) {
+                // salary page: the paying bank and employee accounts depend on the payment type, so rebuild the page
+                const pageUrl = new URL(window.location.href)
+                pageUrl.searchParams.set('ptype', context.currentRecord.getValue(context.fieldId))
+                window.onbeforeunload = null
+                window.location.href = pageUrl.toString()
+            } else if (context.fieldId === 'custpage_cr_account' && !context.sublistId) {
+                // display only: the Suitelet reads the chosen account again on submit
+                const accountId = context.currentRecord.getValue(context.fieldId)
+                const accounts = JSON.parse(context.currentRecord.getValue('custpage_cr_accounts') || '[]')
+                const account = accounts.find(function (a) {
+                    return a.id === accountId
+                }) || {bank: {}, branch: {}}
+                const values = {
+                    custpage_cr_bank: account.bank.text,
+                    custpage_cr_bank_branch: account.branch.text,
+                    custpage_cr_bank_ac_name: account.accountName,
+                    custpage_cr_bank_ac_number: account.accountNumber
+                }
+                Object.keys(values).forEach(function (fieldId) {
+                    context.currentRecord.setValue({fieldId: fieldId, value: values[fieldId] || ''})
                 })
             }
         }

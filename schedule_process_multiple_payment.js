@@ -3,6 +3,8 @@
  * @NScriptType Scheduledscript
  */
 define(['N/runtime', 'N/record', './rdmodule'], function (runtime, record, rdmodu) {
+    const PAYABLE_TYPES = ['vendorpayment', 'vendorprepayment']
+
     return {
         execute: context => {
             const script = runtime.getCurrentScript()
@@ -12,6 +14,8 @@ define(['N/runtime', 'N/record', './rdmodule'], function (runtime, record, rdmod
             const params = JSON.parse(paramsRaw)
             // accepts {type, records} (bank transfer) or a bare array of records (vendor payments)
             const records = Array.isArray(params) ? params : params.records
+            const isTransfer = params.type === 'transfer'
+            const purpose = rdmodu.categorypurposes.hasOwnProperty(params.purpose) ? params.purpose : 'CUST'
             log.debug('SCHEDULE_RECORDS', params.type || 'payment')
             records.forEach(pr => {
                 // one failing record must not stop the rest of the run
@@ -26,18 +30,36 @@ define(['N/runtime', 'N/record', './rdmodule'], function (runtime, record, rdmod
                         log.audit('SKIP_ALREADY_SUBMITTED', {record: pr, nchltran: activeTran})
                         return
                     }
+                    if (!isTransfer && (!PAYABLE_TYPES.includes(tranRecord.type) || tranRecord.getValue('approvalstatus') !== '2')) {
+                        log.audit('SKIP_NOT_PAYABLE', {record: pr, approvalstatus: tranRecord.getValue('approvalstatus')})
+                        return
+                    }
                     const paymentType = tranRecord.getValue('custbody_nchl_payment_type') === '1' ? 'CIPS' : 'IPS'
                     const fromAccount = tranRecord.getValue('account') || tranRecord.getValue('fromaccount')
                     const drBankDetail = rdmodu.getcoabankdetail(fromAccount, paymentType)
-                    // vendor payments carry the vendor's NCHL bank record, bank transfers carry the receiving GL account
-                    const crBankRecordId = tranRecord.getValue('custbody_rdnchl_bank')
-                    const crBankDetail = crBankRecordId
-                        ? rdmodu.getbankdetail(crBankRecordId)
-                        : rdmodu.getcoabankdetail(tranRecord.getValue('toaccount'), paymentType)
+                    // bank transfers pay the receiving GL account; vendor payments pay the account chosen on the bulk page
+                    let payeeAccount = null, crBankDetail = null
+                    if (isTransfer) {
+                        crBankDetail = rdmodu.getcoabankdetail(tranRecord.getValue('toaccount'), paymentType)
+                    } else {
+                        // only an active, verified account of this vendor and payment type is accepted
+                        payeeAccount = rdmodu.getpayeeaccounts(tranRecord.getValue('entity'), paymentType)
+                            .find(account => account.id === String(pr.payeeaccount))
+                        if (!payeeAccount) {
+                            log.error('SKIP_INVALID_PAYEE_ACCOUNT', {record: pr})
+                            return
+                        }
+                        crBankDetail = {
+                            custrecord_rdnchl_bank_prop: JSON.stringify(payeeAccount.bank),
+                            custrecord_rdnchl_bank_branch_prop: JSON.stringify(payeeAccount.branch),
+                            custrecord_rdnchl_account_name: payeeAccount.accountName,
+                            custrecord_rdnchl_account_number: payeeAccount.accountNumber
+                        }
+                    }
                     const batch = {
                         paymenttype: paymentType,
                         amount: tranRecord.getValue('total') || tranRecord.getValue('payment') || tranRecord.getValue('fromamount'),
-                        purpose: 'CUST',
+                        purpose: purpose,
                         drbank: JSON.parse(drBankDetail.custrecord_rdnchl_bank_prop).value,
                         drbankbranch: JSON.parse(drBankDetail.custrecord_rdnchl_bank_branch_prop).value,
                         draccountname: drBankDetail.custrecord_rdnchl_account_name,
@@ -47,6 +69,9 @@ define(['N/runtime', 'N/record', './rdmodule'], function (runtime, record, rdmod
                         crbankbranch: JSON.parse(crBankDetail.custrecord_rdnchl_bank_branch_prop).value,
                         craccountname: crBankDetail.custrecord_rdnchl_account_name,
                         craccount: crBankDetail.custrecord_rdnchl_account_number
+                    }
+                    if (!isTransfer) {
+                        batch.endtoendid = (tranRecord.getValue('tranid') + tranRecord.getText('entity')).replace(/\s/g, '')
                     }
                     log.debug('BATCH_DETAIL', batch)
                     const relRecProp = {
@@ -58,6 +83,10 @@ define(['N/runtime', 'N/record', './rdmodule'], function (runtime, record, rdmod
                         params: batch
                     })
                     log.debug('saved record id', 'record id = ' + nchlTranRecord)
+                    if (nchlTranRecord && payeeAccount) {
+                        // keep the paid-to account on the payment for audit
+                        rdmodu.updaterelrecord({type: relRecProp.type, id: relRecProp.id, values: {custbody_rdnchl_bank: payeeAccount.id}})
+                    }
                     if (nchlTranRecord) {
                         // post*batch returns a string when the request itself failed
                         const nchlResponse = paymentType === 'CIPS'

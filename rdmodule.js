@@ -5,6 +5,8 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
     function (http, encode, npiconf, cache, search, record, certificate, error) {
 
         return {
+            // NCHL categoryPurpose codes offered on the payment pages
+            categorypurposes: {CUST: 'Customer Payment', SUPP: 'Supplier Payment'},
             generatetoken: function () {
                 try {
                     // Basic auth requires standard base64; the URL-safe alphabet changes '+' and '/'
@@ -152,6 +154,59 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 return selectOptions
             },
             /**
+             * Active, NCHL-verified bank accounts of a payee for one payment type
+             * @param {string|number} entityid vendor / employee internal id
+             * @param {string} type CIPS or IPS
+             * @returns {{id: string, name: string, bank: Object, branch: Object, accountName: string, accountNumber: string}[]}
+             */
+            getpayeeaccounts: function (entityid, type) {
+                const accounts = []
+                search.create({
+                    type: 'customrecord_rd_nchl_bank_detail',
+                    filters: [
+                        ['custrecord_nchl_bank_entity', 'anyof', entityid],
+                        'AND',
+                        ['custrecord_nchl_bank_type', 'is', type],
+                        'AND',
+                        ['custrecord_nchl_account_verified', 'is', 'T'],
+                        'AND',
+                        ['isinactive', 'is', 'F']
+                    ],
+                    columns: ['name', 'custrecord_rdnchl_bank_prop', 'custrecord_rdnchl_bank_branch_prop',
+                        'custrecord_rdnchl_account_name', 'custrecord_rdnchl_account_number']
+                }).run().each(result => {
+                    accounts.push({
+                        id: result.id,
+                        name: result.getValue('name'),
+                        bank: JSON.parse(result.getValue('custrecord_rdnchl_bank_prop') || '{}'),
+                        branch: JSON.parse(result.getValue('custrecord_rdnchl_bank_branch_prop') || '{}'),
+                        accountName: result.getValue('custrecord_rdnchl_account_name'),
+                        accountNumber: result.getValue('custrecord_rdnchl_account_number')
+                    })
+                    return true
+                })
+                return accounts
+            },
+            /**
+             * Which of the given entities are employees
+             * @param {string[]} entityids
+             * @returns {Set<string>} internal ids of the employees among them
+             */
+            getemployeeids: function (entityids) {
+                const employees = new Set()
+                if (entityids.length === 0) {
+                    return employees
+                }
+                search.create({
+                    type: search.Type.EMPLOYEE,
+                    filters: [['internalid', 'anyof', entityids]]
+                }).run().each(result => {
+                    employees.add(String(result.id))
+                    return true
+                })
+                return employees
+            },
+            /**
              * Asks NCHL whether the account number and name match the bank's records
              * @param option
              * @param {string} option.bankId NCHL bank id
@@ -231,6 +286,116 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 })
                 return nchltran.save()
             },
+            /**
+             * Sends one POST to NCHL and records it in the NCHL API Log of the NCHL transaction it belongs to.
+             * Getting the access token is part of the call, so a failed login is logged as well.
+             * @param {Object} option
+             * @param {string|number} [option.nchltranid] NCHL transaction to log against; nothing is logged without it
+             * @param {string} option.action what the request does, shown in the log
+             * @param {string} option.path NCHL path after npiconfig.HOST
+             * @param {Object} option.body request body
+             * @param {string} [option.token] access token to reuse instead of requesting a new one
+             * @returns {http.ClientResponse}
+             */
+            callnchl: function (option) {
+                const request = {
+                    url: npiconf.HOST + option.path,
+                    headers: {'content-type': 'application/json', 'accept': '*/*'},
+                    body: JSON.stringify(option.body)
+                }
+                const started = Date.now()
+                let response = null, failure = null
+                try {
+                    const token = option.token || JSON.parse(this.generatetoken()).access_token
+                    response = http.request({
+                        method: http.Method.POST,
+                        url: request.url,
+                        headers: Object.assign({'authorization': 'Bearer ' + token}, request.headers),
+                        body: request.body
+                    })
+                    return response
+                } catch (e) {
+                    failure = e
+                    throw e
+                } finally {
+                    this.writeapilog(option, request, response, failure, Date.now() - started)
+                }
+            },
+            /**
+             * Never throws: a log that cannot be saved must not stop a payment
+             */
+            writeapilog: function (option, request, response, failure, duration) {
+                if (!option.nchltranid) {
+                    return
+                }
+                // CLOBTEXT holds up to 1,000,000 characters
+                const clob = text => {
+                    let value = typeof text === 'string' ? text : JSON.stringify(text)
+                    try {
+                        value = JSON.stringify(JSON.parse(value), null, 2)
+                    } catch (e) {
+                        // not JSON: keep as received
+                    }
+                    return value && value.length > 999000 ? value.substring(0, 999000) + '\n[truncated]' : value
+                }
+                try {
+                    const values = {
+                        custrecord_lc_nchllog_tran: option.nchltranid,
+                        custrecord_lc_nchllog_action: option.action,
+                        custrecord_lc_nchllog_method: 'POST',
+                        custrecord_lc_nchllog_url: request.url,
+                        custrecord_lc_nchllog_duration: duration,
+                        custrecord_lc_nchllog_request: clob(request.body),
+                        // the access token itself is never stored
+                        custrecord_lc_nchllog_req_headers: clob(Object.assign({'authorization': 'Bearer ***'}, request.headers))
+                    }
+                    if (response) {
+                        values.custrecord_lc_nchllog_http_code = response.code
+                        values.custrecord_lc_nchllog_response = clob(response.body)
+                        values.custrecord_lc_nchllog_resp_headers = clob(response.headers)
+                    }
+                    if (failure) {
+                        values.custrecord_lc_nchllog_error = clob(`${failure.name}: ${failure.message}\n` +
+                            (Array.isArray(failure.stack) ? failure.stack.join('\n') : (failure.stack || '')))
+                    }
+                    const logRecord = record.create({type: 'customrecord_lc_nchl_api_log'})
+                    Object.keys(values).forEach(fieldId => {
+                        if (values[fieldId] !== undefined && values[fieldId] !== null && values[fieldId] !== '') {
+                            logRecord.setValue({fieldId: fieldId, value: values[fieldId]})
+                        }
+                    })
+                    logRecord.save()
+                } catch (e) {
+                    log.error('NCHL_API_LOG_NOT_SAVED', {nchltran: option.nchltranid, action: option.action, error: e.message})
+                }
+            },
+            /**
+             * Payment requests sent to NCHL for an NCHL transaction, oldest first (status checks left out)
+             * @param {string|number} nchltranid
+             * @returns {{action: string, created: string, code: string, request: string}[]}
+             */
+            getpaymentrequests: function (nchltranid) {
+                const requests = []
+                search.create({
+                    type: 'customrecord_lc_nchl_api_log',
+                    filters: [
+                        ['custrecord_lc_nchllog_tran', 'anyof', nchltranid],
+                        'AND',
+                        ['custrecord_lc_nchllog_action', 'isnot', 'STATUS CHECK']
+                    ],
+                    columns: [search.createColumn({name: 'internalid', sort: search.Sort.ASC}), 'created',
+                        'custrecord_lc_nchllog_action', 'custrecord_lc_nchllog_http_code', 'custrecord_lc_nchllog_request']
+                }).run().each(result => {
+                    requests.push({
+                        action: result.getValue('custrecord_lc_nchllog_action'),
+                        created: result.getValue('created'),
+                        code: result.getValue('custrecord_lc_nchllog_http_code'),
+                        request: result.getValue('custrecord_lc_nchllog_request')
+                    })
+                    return true
+                })
+                return requests
+            },
             postipsbatch: function (nchltranid) {
                 const nchltranrec = record.load({type: 'customrecord_nchl_transaction', id: nchltranid})
                 const batch = JSON.parse(nchltranrec.getValue('custrecord_nchl_tran_batch'))
@@ -256,16 +421,11 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 requestBody.token = this.sigtoken({batchstr: batchstr, transtr: transtr})
                 log.debug({title: 'POSTIPS_REQ_BODY', details: requestBody})
                 try {
-                    const npiAuth = JSON.parse(this.generatetoken())
-                    const response = http.request({
-                        method: http.Method.POST,
-                        url: npiconf.HOST + '/api/postnchlipsbatch',
-                        headers: {
-                            'content-type': 'application/json',
-                            'authorization': 'Bearer ' + npiAuth.access_token,
-                            'accept': '*/*'
-                        },
-                        body: JSON.stringify(requestBody)
+                    const response = this.callnchl({
+                        nchltranid: nchltranid,
+                        action: 'POST IPS BATCH',
+                        path: '/api/postnchlipsbatch',
+                        body: requestBody
                     })
                     log.debug({title: 'IPS_BATCH_RESONSE', details: response})
                     return response
@@ -301,16 +461,11 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 requestBody.token = this.sigtoken({batchstr: batchstr, transtr: transtr})
                 log.debug({title: 'POSTCIPS_REQ_BODY', details: requestBody})
                 try {
-                    const npiAuth = JSON.parse(this.generatetoken())
-                    const response = http.request({
-                        method: http.Method.POST,
-                        url: npiconf.HOST + '/api/postcipsbatch',
-                        headers: {
-                            'content-type': 'application/json',
-                            'authorization': 'Bearer ' + npiAuth.access_token,
-                            'accept': '*/*'
-                        },
-                        body: JSON.stringify(requestBody)
+                    const response = this.callnchl({
+                        nchltranid: nchltranid,
+                        action: 'POST CIPS BATCH',
+                        path: '/api/postcipsbatch',
+                        body: requestBody
                     })
                     log.debug({title: 'CIPS_BATCH_RESONSE', details: response})
                     return response
@@ -487,17 +642,11 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 const isRealTime = nchlTranRecord.getValue('custrecord_nchl_tran_mode') === '1'
                 const preApiUri = isRealTime ? '/api/billpayment/' : '/api/ips/billpayment/'
                 const apiUrl = option.reqtype === 'lodge' ? 'lodgebillpay.do' : 'confirmbillpay.do'
-                const url = npiconf.HOST + preApiUri + apiUrl
-                const npiAuth = JSON.parse(this.generatetoken())
-                const response = http.request({
-                    method: http.Method.POST,
-                    url: url,
-                    headers: {
-                        'content-type': 'application/json',
-                        'authorization': 'Bearer ' + npiAuth.access_token,
-                        'accept': '*/*'
-                    },
-                    body: JSON.stringify(requestBody)
+                const response = this.callnchl({
+                    nchltranid: option.nchltranrecid,
+                    action: option.reqtype === 'lodge' ? 'BILL LODGE' : 'BILL CONFIRM',
+                    path: preApiUri + apiUrl,
+                    body: requestBody
                 })
                 log.debug({title: option.reqtype + '_RESPONSE', details: response})
                 return JSON.parse(response.body)
@@ -558,19 +707,12 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 return this.gettrandetail(option, '/api/getcipstxnlistbybatchid', 'CIPS_TRAN_DET_RESP')
             },
             gettrandetail: function (option, uri, logTitle) {
-                const npiAuth = option.token ? {access_token: option.token} : JSON.parse(this.generatetoken())
-                const url = npiconf.HOST + uri
-                const response = http.request({
-                    method: http.Method.POST,
-                    url: url,
-                    headers: {
-                        'content-type': 'application/json',
-                        'authorization': 'Bearer ' + npiAuth.access_token,
-                        'accept': '*/*'
-                    },
-                    body: JSON.stringify({
-                        batchId: option.batchid
-                    })
+                const response = this.callnchl({
+                    nchltranid: option.nchltranid,
+                    action: 'STATUS CHECK',
+                    path: uri,
+                    body: {batchId: option.batchid},
+                    token: option.token
                 })
                 log.debug(logTitle, response)
                 return response
@@ -599,7 +741,7 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 }
                 const isRealTime = mode === '1'
                 const batch = JSON.parse(tran.custrecord_nchl_tran_batch || '{}')
-                const detailOption = {batchid: batch.batchId, token: token}
+                const detailOption = {batchid: batch.batchId, token: token, nchltranid: nchltranid}
                 const response = isRealTime ? this.getcipstrandetail(detailOption) : this.getipstrandetail(detailOption)
                 if (response.code !== 200) {
                     throw error.create({
@@ -658,11 +800,16 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 })
                 const tranStatus = this.gettranstatus(responseText)
                 if (tranStatus.status === 'SUCCESS' && tran.custrecord_nchl_tran_rel_record.length) {
-                    record.submitFields({
-                        type: tran.custrecord_rd_ns_record_type,
-                        id: tran.custrecord_nchl_tran_rel_record[0].value,
-                        values: {custbody_rdnchl_paid_online: true}
-                    })
+                    try {
+                        record.submitFields({
+                            type: tran.custrecord_rd_ns_record_type,
+                            id: tran.custrecord_nchl_tran_rel_record[0].value,
+                            values: {custbody_rdnchl_paid_online: true}
+                        })
+                    } catch (e) {
+                        // paid online is not applied to journals and contra vouchers; their NCHL transaction blocks a second payment
+                        log.audit('PAID_FLAG_NOT_SET', {nchltran: nchltranid, error: e.message})
+                    }
                 }
                 log.audit('NCHL_STATUS_REFRESHED', {nchltran: nchltranid, batchId: batch.batchId, status: tranStatus.status})
                 return {status: tranStatus.status, message: tranStatus.message, detail: detail}

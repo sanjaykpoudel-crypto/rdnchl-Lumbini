@@ -62,7 +62,7 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
             }
             // CIPS (mode 1) batches are looked up on the CIPS endpoint, not the IPS one
             const isRealTime = tranRec.getValue('custrecord_nchl_tran_mode') === '1'
-            const detailOption = {batchid: batch.batchId, token: context.request.parameters.token}
+            const detailOption = {batchid: batch.batchId, token: context.request.parameters.token, nchltranid: tranRec.id}
             const detailResponse = refreshed ? null
                 : isRealTime ? rdmod.getcipstrandetail(detailOption) : rdmod.getipstrandetail(detailOption)
 

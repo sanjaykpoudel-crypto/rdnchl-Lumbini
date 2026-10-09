@@ -6,11 +6,10 @@ define(['N/url', './rdmodule', 'N/record', 'N/runtime'], function (url, rdmodu, 
     return {
         beforeLoad: context => {
             const form = context.form
-            const isips = context.newRecord.getValue('custbody_nchl_payment_type')
-            const bankactype = isips === '2' ? 'IPS' : 'CIPS'
-            if (context.type === 'view') {
-                form.getField({id: 'custbody_rdnchl_bank'})
-                    .updateDisplayType({displayType: 'normal'})
+            // The payee account is chosen on the Pay Online page, which records it here
+            const paidToField = form.getField({id: 'custbody_rdnchl_bank'})
+            if (paidToField) {
+                paidToField.updateDisplayType({displayType: 'inline'})
             }
             if (context.type === 'create' || context.type === 'edit') { //TODO: Upload this changes or might not be useful
                 if (runtime.executionContext === runtime.ContextType.USER_INTERFACE) {
@@ -33,26 +32,6 @@ define(['N/url', './rdmodule', 'N/record', 'N/runtime'], function (url, rdmodu, 
                         }
                     }
                 }
-                const entity = context.newRecord.getValue('entity')
-                form.addField({
-                    id: 'custpage_dev_field',
-                    label: 'dev field',
-                    type: 'text',
-                }).defaultValue = entity ? entity : 'No Entity Set'
-                const entityBankField = form.addField({
-                    id: 'custpage_entity_bank',
-                    label: 'entity Bank (nchl)',
-                    type: 'select',
-                    container: 'custom'
-                })
-                if (entity) {
-                    const selectedBank = context.newRecord.getValue('custbody_rdnchl_bank')
-                    const bankoptionlist = rdmodu.getentitybanks(entity, bankactype)
-                    bankoptionlist.forEach(bankoption => {
-                        bankoption.isSelected = bankoption.value === selectedBank
-                        entityBankField.addSelectOption(bankoption)
-                    })
-                }
             }
             if (context.type === 'view') {
                 if (context.newRecord.getValue('approvalstatus') === '2' && !context.newRecord.getValue('custbody_rdnchl_paid_online')
@@ -62,8 +41,7 @@ define(['N/url', './rdmodule', 'N/record', 'N/runtime'], function (url, rdmodu, 
                         deploymentId: 'customdeploy_lc_payment_confirm_sl',
                         params: {
                             recordtype: context.newRecord.type,
-                            recordid: context.newRecord.id,
-                            ptype: bankactype
+                            recordid: context.newRecord.id
                         }
                     })
                     form.addButton({

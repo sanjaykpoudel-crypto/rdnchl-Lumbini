@@ -3,6 +3,10 @@
  * @NScriptType Suitelet
  */
 define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redirect'], function (serverWidget, record, rdmod, message, redirect) {
+    const CONTRA_TYPE = 'customtransaction_contra'
+    // contra voucher status B = Approved, A = Pending Approval
+    const APPROVED_STATUS = 'B'
+
     /**
      * Reads the contra voucher: the credit line is the paying (debtor) bank account, each debit line is a
      * receiving bank account. Used on GET to build the page and on POST so the amounts and bank accounts
@@ -29,7 +33,8 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
                 const bankDetails = rdmod.getcoabankdetail(coaId, bankType)
                 bankDetails.amount = debit
                 bankDetails.linememo = contraRecord.getSublistValue({sublistId: 'line', fieldId: 'memo', line: i}) || ''
-                bankDetails.endtoendid = contraRecord.getSublistValue({sublistId: 'line', fieldId: 'custcol_nchl_endtoendid', line: i}) || ''
+                bankDetails.endtoendid = contraRecord.getSublistValue({sublistId: 'line', fieldId: 'custcol_nchl_endtoendid', line: i}) ||
+                    `${contraRecord.getValue('tranid')}-${i + 1}`.replace(/\s/g, '')
                 creditLines.push(bankDetails)
                 creditTotal += parseFloat(debit)
             }
@@ -47,20 +52,42 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
         form.addPageInitMessage({message: message.create({type: type, title: title, message: text})})
     }
 
+    // This page only pays contra vouchers, whatever record type the URL or the submitted form names
+    function loadcontra(id) {
+        return record.load({type: CONTRA_TYPE, id: id})
+    }
+
+    /**
+     * Same conditions as the Pay Online button, checked again because this page can be opened or submitted directly
+     * @returns {{title: string, message: string, activeTran: Object}|null} why the voucher cannot be paid
+     */
+    function getblockreason(contraRecord) {
+        const activeTran = rdmod.getactivenchltran(contraRecord.id)
+        if (activeTran) {
+            return {
+                title: 'Payment already submitted',
+                message: `NCHL transaction ${activeTran.name} for this voucher is ${activeTran.status}. Check its status instead of paying again.`,
+                activeTran: activeTran
+            }
+        }
+        if (contraRecord.getValue('custbody_rdnchl_paid_online')) {
+            return {title: 'Payment already submitted', message: 'This voucher is already marked as paid online.'}
+        }
+        if (contraRecord.getValue('transtatus') !== APPROVED_STATUS) {
+            return {title: 'Not approved', message: 'Only approved vouchers can be paid online.'}
+        }
+        return null
+    }
+
     return {
         onRequest: context => {
             const form = serverWidget.createForm({title: 'Payment Confirm'})
             if (context.request.method === 'GET') {
                 try {
-                    const contraRecord = record.load({
-                        type: context.request.parameters.recordtype,
-                        id: context.request.parameters.recordid
-                    })
-                    const activeTran = rdmod.getactivenchltran(context.request.parameters.recordid)
-                    if (contraRecord.getValue('custbody_rdnchl_paid_online') || activeTran) {
-                        showmessage(form, message.Type.WARNING, 'Payment already submitted', activeTran
-                            ? `NCHL transaction ${activeTran.name} for this voucher is ${activeTran.status}. Check its status instead of paying again.`
-                            : 'This voucher is already marked as paid online.')
+                    const contraRecord = loadcontra(context.request.parameters.recordid)
+                    const blockReason = getblockreason(contraRecord)
+                    if (blockReason) {
+                        showmessage(form, message.Type.WARNING, blockReason.title, blockReason.message)
                         context.response.writePage({pageObject: form})
                         return
                     }
@@ -79,6 +106,15 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
                     paymentTypeField.addSelectOption({value: 'CIPS', text: 'Real-Time', isSelected: contra.pmtType === '1'})
                     paymentTypeField.addSelectOption({value: 'IPS', text: 'Non-Real-Time', isSelected: contra.pmtType !== '1'})
                     paymentTypeField.updateDisplayType({displayType: serverWidget.FieldDisplayType.DISABLED})
+                    // inline select on the transaction list renders as a link to the voucher
+                    const createdFromField = form.addField({
+                        id: 'custpage_created_from',
+                        label: 'Created From',
+                        type: serverWidget.FieldType.SELECT,
+                        source: 'transaction'
+                    })
+                    createdFromField.updateDisplayType({displayType: serverWidget.FieldDisplayType.INLINE})
+                    createdFromField.defaultValue = contraRecord.id
                     form.addField({
                         id: 'custpage_dr_bank',
                         label: 'Bank',
@@ -101,11 +137,17 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
                         type: serverWidget.FieldType.TEXT
                     }).updateDisplayType({displayType: serverWidget.FieldDisplayType.INLINE})
                         .defaultValue = debtor.custrecord_rdnchl_account_number
-                    form.addField({
+                    const purposeField = form.addField({
                         id: 'custpage_category_purpose',
                         label: 'category purpose',
-                        type: serverWidget.FieldType.TEXT
-                    }).defaultValue = 'CUST'
+                        type: serverWidget.FieldType.SELECT
+                    })
+                    purposeField.isMandatory = true
+                    Object.keys(rdmod.categorypurposes).forEach(code => purposeField.addSelectOption({
+                        value: code,
+                        text: `${code} - ${rdmod.categorypurposes[code]}`,
+                        isSelected: code === 'CUST'
+                    }))
                     form.addField({
                         id: 'custpage_batch_amount',
                         label: 'total amount',
@@ -123,10 +165,7 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
                         label: 'related record',
                         type: serverWidget.FieldType.TEXT
                     }).updateDisplayType({displayType: serverWidget.FieldDisplayType.HIDDEN})
-                        .defaultValue = JSON.stringify({
-                        type: context.request.parameters.recordtype,
-                        id: context.request.parameters.recordid
-                    })
+                        .defaultValue = JSON.stringify({type: CONTRA_TYPE, id: contraRecord.id})
                     const formSublist = form.addSublist({
                         id: 'batch_transaction',
                         label: 'Batch Transaction',
@@ -159,7 +198,7 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
                     })
                     bankField.updateDisplayType({displayType: serverWidget.FieldDisplayType.INLINE})
                     bankBranchField.updateDisplayType({displayType: serverWidget.FieldDisplayType.INLINE})
-                    form.addSubmitButton({label: 'Okay'})
+                    form.addSubmitButton({label: 'Make Payment'})
                 } catch (e) {
                     log.error('GET_ERROR', e)
                     showmessage(form, message.Type.ERROR, 'ERROR', e.message || JSON.stringify(e))
@@ -167,15 +206,19 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
             } else {
                 try {
                     const requestParams = context.request
-                    const relRecProp = JSON.parse(requestParams.parameters.custpage_relrecord)
+                    const contraRecord = loadcontra(JSON.parse(requestParams.parameters.custpage_relrecord).id)
+                    const relRecProp = {type: CONTRA_TYPE, id: contraRecord.id}
                     // Re-check on submit: the form may have been opened twice or submitted twice
-                    const activeTran = rdmod.getactivenchltran(relRecProp.id)
-                    if (activeTran) {
-                        redirect.toRecord({type: 'customrecord_nchl_transaction', id: activeTran.id})
+                    const blockReason = getblockreason(contraRecord)
+                    if (blockReason && blockReason.activeTran) {
+                        redirect.toRecord({type: 'customrecord_nchl_transaction', id: blockReason.activeTran.id})
                         return
                     }
+                    if (blockReason) {
+                        throw new Error(blockReason.message)
+                    }
                     // Amounts and bank accounts are re-read from the voucher; only purpose and NCHL memos come from the form
-                    const contra = getcontrapayment(record.load({type: relRecProp.type, id: relRecProp.id}))
+                    const contra = getcontrapayment(contraRecord)
                     if (contra.problems.length > 0) {
                         throw new Error(contra.problems.join('; '))
                     }
@@ -183,7 +226,8 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
                     const params = {
                         paymenttype: contra.bankType,
                         amount: contra.creditTotal,
-                        purpose: requestParams.parameters.custpage_category_purpose,
+                        purpose: rdmod.categorypurposes.hasOwnProperty(requestParams.parameters.custpage_category_purpose)
+                            ? requestParams.parameters.custpage_category_purpose : 'CUST',
                         drbank: JSON.parse(debtor.custrecord_rdnchl_bank_prop).value,
                         drbankbranch: JSON.parse(debtor.custrecord_rdnchl_bank_branch_prop).value,
                         draccountname: debtor.custrecord_rdnchl_account_name,
@@ -202,7 +246,7 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
                     }))
                     log.debug('INSTRUCTIONS', params.instructions)
                     const nchlTranRecord = rdmod.savenchltran({
-                        relrecord: requestParams.parameters.custpage_relrecord,
+                        relrecord: JSON.stringify(relRecProp),
                         params: params
                     })
                     if (nchlTranRecord) {

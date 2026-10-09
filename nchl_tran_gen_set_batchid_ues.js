@@ -124,6 +124,39 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                     }).defaultValue = '<pre style="white-space:pre-wrap;word-break:break-all;font-size:12px;' +
                         'background:#f6f8fa;border:1px solid #d0d7de;padding:10px;max-height:600px;overflow:auto">' +
                         escapedResponse + '</pre>'
+                    form.addTab({id: 'custpage_nchl_request_tab', label: 'NCHL Request'})
+                    const escapeJson = text => {
+                        let pretty = text || ''
+                        try {
+                            pretty = JSON.stringify(JSON.parse(text), null, 2)
+                        } catch (e) {
+                            // not JSON: show as saved
+                        }
+                        return pretty.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                    }
+                    const preStyle = 'white-space:pre-wrap;word-break:break-all;font-size:12px;' +
+                        'background:#f6f8fa;border:1px solid #d0d7de;padding:10px;max-height:600px;overflow:auto'
+                    // the exact bodies sent, from the NCHL API Log; status checks are only in the log table
+                    const sentRequests = rdmodu.getpaymentrequests(context.newRecord.id)
+                    let requestHtml = sentRequests.map(sent =>
+                        `<p><b>${escapeJson(sent.action)}</b> - ${escapeJson(sent.created)} - HTTP ${escapeJson(sent.code || 'no response')}</p>` +
+                        `<pre style="${preStyle}">${escapeJson(sent.request)}</pre>`).join('')
+                    if (!requestHtml) {
+                        // paid before the API log existed: show what was built for NCHL, without the signature token
+                        const built = {
+                            batch: JSON.parse(context.newRecord.getValue('custrecord_nchl_tran_batch') || '{}'),
+                            instructions: JSON.parse(context.newRecord.getValue('custrecord_nchl_tran_instruction') || '[]')
+                        }
+                        requestHtml = '<p>The exact request (with its signature token) was not logged for this transaction. ' +
+                            'Batch and instructions as built for NCHL:</p>' +
+                            `<pre style="${preStyle}">${escapeJson(JSON.stringify(built))}</pre>`
+                    }
+                    form.addField({
+                        id: 'custpage_nchl_request_json',
+                        label: 'NCHL Request',
+                        type: 'inlinehtml',
+                        container: 'custpage_nchl_request_tab'
+                    }).defaultValue = requestHtml
                     const showmessage = context.newRecord.getValue('custrecord_show_pageinit_msg')
                     // set by the resync Suitelet's redirect; both come from the URL, so escape before showing
                     const escapeHtml = text => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
