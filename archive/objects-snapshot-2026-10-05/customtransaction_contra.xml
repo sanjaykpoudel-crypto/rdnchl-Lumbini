@@ -1,0 +1,46 @@
+<customtransactiontype scriptid="customtransaction_contra">
+  <aidescription></aidescription>
+  <cancloseorder>F</cancloseorder>
+  <isposting>T</isposting>
+  <isvoidable>F</isvoidable>
+  <name>Contra</name>
+  <showstatus>T</showstatus>
+  <transactionstyle>JOURNAL</transactionstyle>
+  <segments>
+    <classposition>HEADER</classposition>
+    <departmentposition>HEADER</departmentposition>
+    <isclassmandatory>F</isclassmandatory>
+    <isdepartmentmandatory>F</isdepartmentmandatory>
+    <islocationmandatory>F</islocationmandatory>
+    <locationposition>HEADER</locationposition>
+  </segments>
+  <statuses>
+    <status scriptid="status_10084_9331284_sb1_720">
+      <description>Pending Approval</description>
+      <id>A</id>
+      <isposting>F</isposting>
+    </status>
+    <status scriptid="status_10085_9331284_sb1_116">
+      <description>Approved</description>
+      <id>B</id>
+      <isposting>T</isposting>
+    </status>
+  </statuses>
+  <permissions>
+    <permission>
+      <permittedlevel>VIEW</permittedlevel>
+      <permittedrole>[scriptid=customrole1037]</permittedrole>
+    </permission>
+    <permission>
+      <permittedlevel>FULL</permittedlevel>
+      <permittedrole>ADMINISTRATOR</permittedrole>
+    </permission>
+  </permissions>
+  <links>
+    <link>
+      <linkcategory>BASICTRANSACTIONSBANK</linkcategory>
+      <linklabel>Make Contra</linklabel>
+      <linktasktype>LIST</linktasktype>
+    </link>
+  </links>
+</customtransactiontype>

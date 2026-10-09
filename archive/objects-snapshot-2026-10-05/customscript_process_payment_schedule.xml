@@ -1,0 +1,55 @@
+<scheduledscript scriptid="customscript_process_payment_schedule">
+  <description></description>
+  <isinactive>F</isinactive>
+  <name>Process Payment Schedule</name>
+  <notifyadmins>F</notifyadmins>
+  <notifyemails></notifyemails>
+  <notifyowner>T</notifyowner>
+  <scriptfile>[/SuiteBundles/Bundle 480242/rdnchl/schedule_process_multiple_payment.js]</scriptfile>
+  <scriptcustomfields>
+    <scriptcustomfield scriptid="custscript_nchl_script_params">
+      <accesslevel>2</accesslevel>
+      <aidescription></aidescription>
+      <applyformatting>F</applyformatting>
+      <checkspelling>F</checkspelling>
+      <defaultchecked>F</defaultchecked>
+      <defaultselection></defaultselection>
+      <defaultvalue></defaultvalue>
+      <description></description>
+      <displayheight></displayheight>
+      <displaytype>NORMAL</displaytype>
+      <displaywidth></displaywidth>
+      <dynamicdefault></dynamicdefault>
+      <fieldtype>CLOBTEXT</fieldtype>
+      <help></help>
+      <isformula>F</isformula>
+      <ismandatory>F</ismandatory>
+      <label>script params</label>
+      <linktext></linktext>
+      <maxlength></maxlength>
+      <maxvalue></maxvalue>
+      <minvalue></minvalue>
+      <onparentdelete></onparentdelete>
+      <searchlevel>2</searchlevel>
+      <selectrecordtype></selectrecordtype>
+      <setting></setting>
+      <storevalue>T</storevalue>
+    </scriptcustomfield>
+  </scriptcustomfields>
+  <scriptdeployments>
+    <scriptdeployment scriptid="customdeploy_process_payment_schedule">
+      <custscript_nchl_script_params></custscript_nchl_script_params>
+      <isdeployed>T</isdeployed>
+      <loglevel>DEBUG</loglevel>
+      <status>NOTSCHEDULED</status>
+      <title>Process Payment Schedule</title>
+      <recurrence>
+        <single>
+          <repeat></repeat>
+          <startdate>2023-02-03</startdate>
+          <starttime>12:15:00Z</starttime>
+        </single>
+      </recurrence>
+    </scriptdeployment>
+  </scriptdeployments>
+</scheduledscript>

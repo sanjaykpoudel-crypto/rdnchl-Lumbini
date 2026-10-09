@@ -1,0 +1,22 @@
+<restlet scriptid="customscript_npi_inward_payment">
+  <description></description>
+  <isinactive>F</isinactive>
+  <name>NPI Inward Payment</name>
+  <notifyadmins>F</notifyadmins>
+  <notifyemails></notifyemails>
+  <notifyowner>T</notifyowner>
+  <notifyuser>F</notifyuser>
+  <scriptfile>[/SuiteScripts/npi_integration/npi_send_form_detail_rl.js]</scriptfile>
+  <scriptdeployments>
+    <scriptdeployment scriptid="customdeploy_npi_inward_payment">
+      <allemployees>F</allemployees>
+      <allpartners>F</allpartners>
+      <allroles>F</allroles>
+      <audslctrole>ADMINISTRATOR</audslctrole>
+      <isdeployed>T</isdeployed>
+      <loglevel>DEBUG</loglevel>
+      <status>RELEASED</status>
+      <title>NPI Inward Payment</title>
+    </scriptdeployment>
+  </scriptdeployments>
+</restlet>
