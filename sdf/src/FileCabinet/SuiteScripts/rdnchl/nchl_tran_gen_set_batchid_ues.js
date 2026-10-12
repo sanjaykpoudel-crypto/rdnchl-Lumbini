@@ -82,6 +82,12 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                             }).updateDisplayType({displayType: 'inline'})
                                 .defaultValue = reasonmsg
                         }
+                    } else if (!tranresp && rdmodu.isbillnotpaid(context.newRecord.getValue('custrecord_nchl_tran_raw_detail'))) {
+                        // government payment page: the bill was fetched, Make Payment was not clicked
+                        status = 'Bill fetched, not paid'
+                        msgType = message.Type.INFORMATION
+                        msgTitle = 'Not paid'
+                        msgDetail = 'The bill was fetched from NCHL but not paid. Nothing was debited.'
                     } else if (!tranresp && status === 'empty') {
                         status = 'Not posted'
                         msgDetail = 'Unexpected error occurred'
@@ -91,7 +97,8 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                     // Biller payments (IRD / DOC) have no status API, so they are left out.
                     const mode = context.newRecord.getValue('custrecord_nchl_tran_mode')
                     const isBillerResponse = /"responseResult"/.test(tranresp || '')
-                    if ((mode === '1' || mode === '2') && !isBillerResponse && status !== 'SUCCESS') {
+                    const billNotPaid = !tranresp && rdmodu.isbillnotpaid(context.newRecord.getValue('custrecord_nchl_tran_raw_detail'))
+                    if ((mode === '1' || mode === '2') && !isBillerResponse && !billNotPaid && status !== 'SUCCESS') {
                         const resyncLink = url.resolveScript({
                             scriptId: 'customscript_lc_get_nchl_tran_detail',
                             deploymentId: 'customdeploy_lc_get_nchl_tran_detail',
@@ -246,7 +253,10 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                             amount: typeof params.amount === 'string' ? parseFloat(params.amount) : params.amount,
                         }
 
-                        if (params.hasOwnProperty('billertype') && params.billertype === 'IRD') {
+                        if (params.hasOwnProperty('billerfields')) {
+                            // government payment page (govpayment_confirm_page_sl.js): appId and the biller's bill fields
+                            Object.assign(instruction, params.billerfields)
+                        } else if (params.hasOwnProperty('billertype') && params.billertype === 'IRD') {
                             instruction.appId = params.appId
                             instruction.refId = params.refId
                             instruction.particulars = params.particulars

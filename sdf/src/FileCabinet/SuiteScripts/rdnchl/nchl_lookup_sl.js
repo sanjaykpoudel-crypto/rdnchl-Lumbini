@@ -9,6 +9,7 @@ define(['./rdmodule'], function (rdmodu) {
         banks: params => rdmodu.getbanklist({type: params.type === 'IPS' ? 'IPS' : 'CIPS'}),
         branches: params => rdmodu.getbankbranchlist({bankId: params.bankId}),
         billers: params => rdmodu.getbillertypes(params.type || 'ALL') || [],
+        appjourney: params => rdmodu.getappjourney(params.appCode),
         /**
          * Account check (/api/validatebankaccount); NCHL also returns the account's branch
          */

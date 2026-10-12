@@ -1,0 +1,24 @@
+<customlist scriptid="customlist_lc_nchl_gov_biller">
+  <description>Government bill a journal pays through NCHL (govbillers.js reads the first word)</description>
+  <isinactive>F</isinactive>
+  <ismatrixoption>F</ismatrixoption>
+  <isordered>T</isordered>
+  <name>NCHL Government Payment</name>
+  <customvalues>
+    <customvalue scriptid="val_lc_gov_ird">
+      <abbreviation></abbreviation>
+      <isinactive>F</isinactive>
+      <value>IRD (TDS, VAT, salary tax)</value>
+    </customvalue>
+    <customvalue scriptid="val_lc_gov_ssf">
+      <abbreviation></abbreviation>
+      <isinactive>F</isinactive>
+      <value>SSF</value>
+    </customvalue>
+    <customvalue scriptid="val_lc_gov_cit">
+      <abbreviation></abbreviation>
+      <isinactive>F</isinactive>
+      <value>CIT (employee contribution)</value>
+    </customvalue>
+  </customvalues>
+</customlist>

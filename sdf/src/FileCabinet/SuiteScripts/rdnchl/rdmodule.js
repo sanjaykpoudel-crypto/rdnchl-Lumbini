@@ -1,8 +1,8 @@
 /**
  * @NApiVersion 2.1
  */
-define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 'N/crypto/certificate', 'N/error'],
-    function (http, encode, npiconf, cache, search, record, certificate, error) {
+define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 'N/crypto/certificate', 'N/error', './govbillers'],
+    function (http, encode, npiconf, cache, search, record, certificate, error, govbillers) {
         const TOKEN_CACHE = 'LC_NCHL_TOKENS'
         const LIST_CACHE = 'LC_NCHL_LISTS'
         const REFRESH_TOKEN_MS = 12 * 60 * 60 * 1000
@@ -662,6 +662,14 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                     return null
                 }
             },
+            /**
+             * A biller's form definition (fields, labels, mandatory flags) as NCHL's app journey describes it
+             * @param {string} appCode e.g. GON-6-RBB-FDRL (IRD)
+             */
+            getappjourney: function (appCode) {
+                const response = this.callnchl({path: '/billers/v2/appjourneydetails', body: {appCode: appCode}})
+                return JSON.parse(response.body)
+            },
             getdocofficelist: function (appid) {
                 try {
                     const npiAuth = JSON.parse(this.generatetoken())
@@ -984,8 +992,22 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                     return result
                 }
                 if (resp.hasOwnProperty('responseResult')) { //for biller transaction
-                    result.status = resp.responseResult.responseCode === '000' ? 'SUCCESS' : 'FAILED'
-                    result.message = resp.responseResult.responseDescription
+                    const batchDetail = resp.cipsBatchDetail || resp.nchlIpsBatchDetail || {}
+                    const tranDetail = resp.cipsTransactionDetail || resp.nchlIpsTransactionDetail || {}
+                    const fieldErrors = (resp.responseResult.fieldErrors || []).map(fe => fe.message).filter(Boolean)
+                    result.message = fieldErrors.length > 0 ? fieldErrors.join('<br/>') : resp.responseResult.responseDescription
+                    if (resp.responseResult.responseCode !== '000') {
+                        result.status = 'FAILED'
+                    } else if (batchDetail.debitStatus && batchDetail.debitStatus !== '000') {
+                        // 999 / ENTR: no final answer on the debit yet, so it must not be paid again
+                        result.status = ['999', 'ENTR'].includes(batchDetail.debitStatus) ? 'IN-PROGRESS' : 'FAILED'
+                        result.message = batchDetail.debitReasonDesc || 'Debit status ' + batchDetail.debitStatus
+                    } else if (!tranDetail.creditStatus || govbillers.PAID_CREDIT_STATUSES.includes(tranDetail.creditStatus)) {
+                        result.status = 'SUCCESS'
+                    } else {
+                        result.status = 'IN-PROGRESS'
+                        result.message = tranDetail.reasonDesc || 'Credit status ' + tranDetail.creditStatus
+                    }
                 } else if (resp.hasOwnProperty('cipsBatchResponse')) {
                     const lines = resp.cipsTxnResponseList || []
                     result.lineMessages = lines.map(line => line.responseMessage)
@@ -1015,6 +1037,18 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 return result
             },
             /**
+             * A government bill that was only fetched (lodged), never confirmed: lodging moves no money
+             * @param {string} rawDetail custrecord_nchl_tran_raw_detail
+             */
+            isbillnotpaid: function (rawDetail) {
+                try {
+                    const stage = JSON.parse(rawDetail || '{}').stage
+                    return stage === 'LODGING' || stage === 'LODGED'
+                } catch (e) {
+                    return false
+                }
+            },
+            /**
              * Finds an earlier NCHL transaction for the same NetSuite record that has not definitely failed.
              * Used to block a second payment while the first one succeeded, is in progress or has an unknown result.
              * @param {string|number} relrecordid internal id of the vendor payment / prepayment / journal
@@ -1034,8 +1068,11 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                     const saved = search.lookupFields({
                         type: 'customrecord_nchl_transaction',
                         id: result.id,
-                        columns: ['custrecord_nchl_tran_response']
+                        columns: ['custrecord_nchl_tran_response', 'custrecord_nchl_tran_raw_detail']
                     })
+                    if (!saved.custrecord_nchl_tran_response && this.isbillnotpaid(saved.custrecord_nchl_tran_raw_detail)) {
+                        return true
+                    }
                     const tranStatus = this.gettranstatus(saved.custrecord_nchl_tran_response)
                     if (tranStatus.status !== 'FAILED') {
                         active = {id: result.id, name: result.getValue('name'), status: tranStatus.status}
