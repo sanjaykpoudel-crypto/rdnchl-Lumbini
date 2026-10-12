@@ -807,6 +807,30 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 log.debug({title: option.reqtype + '_RESPONSE', details: response})
                 return JSON.parse(response.body)
             },
+            /**
+             * Pays a bill confirmed in the NPI Billers iframe (spec v2, 4.7): the npiObject's batch with our bank as
+             * debtor and its transaction, signed with the NPI certificate
+             * @param {string|number} nchltranid NCHL transaction holding the batch and instruction
+             * @returns {Object} NCHL's response
+             */
+            confirmbillerpay: function (nchltranid) {
+                const nchlTranRecord = record.load({type: 'customrecord_nchl_transaction', id: nchltranid})
+                const batch = JSON.parse(nchlTranRecord.getValue('custrecord_nchl_tran_batch'))
+                const instruction = JSON.parse(nchlTranRecord.getValue('custrecord_nchl_tran_instruction'))
+                const batchstr = `${batch.batchId},${batch.debtorAgent},${batch.debtorBranch},${batch.debtorAccount},${batch.batchAmount},${batch.batchCrncy}`
+                const transtr = `${instruction.id},${instruction.instructionId},${instruction.endToEndId},${instruction.appId},${instruction.refId},${instruction.amount}`
+                const response = this.callnchl({
+                    nchltranid: nchltranid,
+                    action: 'BILLER CONFIRM',
+                    path: '/api/npibiller/confirmbillerpay.do',
+                    body: {
+                        cipsBatchDetail: batch,
+                        cipsTransactionDetail: instruction,
+                        token: this.sigtoken({batchstr: batchstr, transtr: transtr})
+                    }
+                })
+                return JSON.parse(response.body)
+            },
             updaterelrecord: function (option) {
                 return record.submitFields({
                     type: option.type,
@@ -1037,13 +1061,14 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 return result
             },
             /**
-             * A government bill that was only fetched (lodged), never confirmed: lodging moves no money
+             * A government bill that was only fetched (lodged) or chosen in the NPI Billers iframe (REVIEWED), never
+             * confirmed: neither moves money
              * @param {string} rawDetail custrecord_nchl_tran_raw_detail
              */
             isbillnotpaid: function (rawDetail) {
                 try {
                     const stage = JSON.parse(rawDetail || '{}').stage
-                    return stage === 'LODGING' || stage === 'LODGED'
+                    return ['LODGING', 'LODGED', 'REVIEWED'].includes(stage)
                 } catch (e) {
                     return false
                 }

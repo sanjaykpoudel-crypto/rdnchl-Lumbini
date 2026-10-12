@@ -277,13 +277,26 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                         }
                     }
                     params.batchId = batchId
-                    const batchInstruction = instructions.length > 0 ? instructions : instruction
+                    let batchInstruction = instructions.length > 0 ? instructions : instruction
+                    let savedBatch = batch
+                    if (params.hasOwnProperty('npiobject')) {
+                        // bill confirmed in the NPI Billers iframe: NCHL's own batch and transaction are paid as they
+                        // are, only the debtor (our bank) is added (spec v2, 4.7)
+                        savedBatch = Object.assign({}, params.npiobject.cipsBatchDetail, {
+                            categoryPurpose: params.npiobject.cipsBatchDetail.categoryPurpose || params.purpose,
+                            debtorAgent: params.drbank,
+                            debtorBranch: params.drbankbranch,
+                            debtorName: params.draccountname,
+                            debtorAccount: params.draccount
+                        })
+                        batchInstruction = params.npiobject.cipsTransactionDetail
+                    }
                     record.submitFields({
                         type: context.newRecord.type,
                         id: context.newRecord.id,
                         values: {
                             name: batchId,
-                            custrecord_nchl_tran_batch: JSON.stringify(batch),
+                            custrecord_nchl_tran_batch: JSON.stringify(savedBatch),
                             custrecord_nchl_tran_instruction: JSON.stringify(batchInstruction)
                         }
                     })
