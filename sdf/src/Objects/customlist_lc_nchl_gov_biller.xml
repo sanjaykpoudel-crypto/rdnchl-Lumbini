@@ -23,7 +23,7 @@
     <customvalue scriptid="val_lc_gov_test">
       <abbreviation></abbreviation>
       <isinactive>F</isinactive>
-      <value>TEST NTC top-up (UAT only)</value>
+      <value>TEST top-up, internet, TV (UAT only)</value>
     </customvalue>
   </customvalues>
 </customlist>

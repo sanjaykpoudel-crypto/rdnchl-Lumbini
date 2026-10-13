@@ -35,11 +35,13 @@ define([], function () {
                 {id: 'freeCode2', label: 'Office Code', maxLength: 100}
             ]
         },
-        // UAT only, to test the iframe payment end to end (NTC's minimum top-up is Rs 10). Remove before go-live,
-        // with its list value val_lc_gov_test.
+        // UAT only, to test the iframe payment end to end with NCHL's test billers (NTC / Ncell top-up, internet, TV;
+        // top-ups start at Rs 10): any biller confirmed in NCHL's page is accepted, the amount must still match.
+        // Remove before go-live, with its list value val_lc_gov_test.
         TEST: {
-            label: 'TEST NTC top-up (UAT only)',
+            label: 'TEST top-up, internet, TV (UAT only)',
             appId: 'MER-1544-APP-1',
+            anyIframeAppId: true,
             amountFromBiller: false,
             fields: [{id: 'refId', label: 'Mobile Number', maxLength: 10}]
         }

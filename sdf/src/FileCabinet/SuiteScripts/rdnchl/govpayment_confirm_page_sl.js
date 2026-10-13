@@ -469,7 +469,8 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
             const bill = npi.cipsTransactionDetail || {}
             const npiBatch = npi.cipsBatchDetail || {}
             const problems = []
-            if (![payment.biller.appId].concat(payment.biller.iframeAppIds || []).includes(bill.appId)) {
+            const knownAppIds = [payment.biller.appId].concat(payment.biller.iframeAppIds || [])
+            if (!payment.biller.anyIframeAppId && !knownAppIds.includes(bill.appId)) {
                 problems.push(`This journal pays ${payment.biller.label} (${payment.biller.appId}); the bill confirmed in NCHL is for ${bill.appId}.`)
             }
             const billAmount = round(bill.amount)
