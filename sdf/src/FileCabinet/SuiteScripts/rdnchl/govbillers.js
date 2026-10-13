@@ -68,9 +68,9 @@ define([], function () {
         // npiconfig. The two passwords are in CREDENTIALS_FILE ({"PASSWORD": basic auth, "USERPASS": user}) in the
         // git-ignored rdnchl-keys folder. CERTIFICATE_ID is NCHL's NPI.pfx uploaded under Setup > Company > Certificates.
         NPI: {
-            // through the relay (its IP is the one NCHL whitelists); the relay's PathTargets sends /devnpi to
-            // https://devnpi.connectips.com
-            HOST: 'http://202.63.242.6:8181/devnpi',
+            // direct from NetSuite (NCHL whitelists NetSuite's IP). Through the relay instead:
+            // 'http://202.63.242.6:8181/devnpi' (relay.json PathTargets "/devnpi": "https://devnpi.connectips.com")
+            HOST: 'https://devnpi.connectips.com',
             USERNAME: 'lumbiniceramics',
             USERID: 'LUMBINICERAMICS@999',
             CERTIFICATE_ID: 'custcertificate_lc_npi_biller',
