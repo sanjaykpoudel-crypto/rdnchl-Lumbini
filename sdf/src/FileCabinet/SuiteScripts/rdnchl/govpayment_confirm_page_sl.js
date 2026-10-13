@@ -445,7 +445,7 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
             const bill = npi.cipsTransactionDetail || {}
             const npiBatch = npi.cipsBatchDetail || {}
             const problems = []
-            if (bill.appId !== payment.biller.appId) {
+            if (![payment.biller.appId].concat(payment.biller.iframeAppIds || []).includes(bill.appId)) {
                 problems.push(`This journal pays ${payment.biller.label} (${payment.biller.appId}); the bill confirmed in NCHL is for ${bill.appId}.`)
             }
             const billAmount = round(bill.amount)

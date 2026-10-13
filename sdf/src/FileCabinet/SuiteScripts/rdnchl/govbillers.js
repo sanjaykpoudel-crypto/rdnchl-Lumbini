@@ -18,6 +18,8 @@ define([], function () {
         SSF: {
             label: 'SSF',
             appId: 'SSF-101-NBL-1',
+            // the NPI Billers iframe offers SSF under a different app code than the billers API
+            iframeAppIds: ['SSF-101-APP-1'],
             amountFromBiller: true,
             fields: [
                 {id: 'refId', label: 'Submission Number', maxLength: 14},
