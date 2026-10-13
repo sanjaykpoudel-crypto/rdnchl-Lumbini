@@ -96,7 +96,9 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                     // payment, because a timed-out or failed-looking request may still have debited the account.
                     // Biller payments (IRD / DOC) have no status API, so they are left out.
                     const mode = context.newRecord.getValue('custrecord_nchl_tran_mode')
-                    const isBillerResponse = /"responseResult"/.test(tranresp || '')
+                    // bills paid through the NPI Billers iframe (raw detail holds the npiObject) have no status API either
+                    const isBillerResponse = /"responseResult"/.test(tranresp || '') ||
+                        /"npiobject"/.test(context.newRecord.getValue('custrecord_nchl_tran_raw_detail') || '')
                     const billNotPaid = !tranresp && rdmodu.isbillnotpaid(context.newRecord.getValue('custrecord_nchl_tran_raw_detail'))
                     if ((mode === '1' || mode === '2') && !isBillerResponse && !billNotPaid && status !== 'SUCCESS') {
                         const resyncLink = url.resolveScript({
