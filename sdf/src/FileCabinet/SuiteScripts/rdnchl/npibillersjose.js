@@ -74,7 +74,10 @@ define(['N/file', 'N/crypto/random', './lib/forge', './govbillers'], function (f
     }
 
     function encrypt(jws) {
-        const header = {kid: gov.IFRAME.NCHL_KEY_ID, cty: 'JWT', enc: 'A256GCM', alg: 'RSA-OAEP-256'}
+        const header = {cty: 'JWT', enc: 'A256GCM', alg: 'RSA-OAEP-256'}
+        if (gov.IFRAME.NCHL_KEY_ID) {
+            header.kid = gov.IFRAME.NCHL_KEY_ID
+        }
         const encodedHeader = base64url(JSON.stringify(header))
         const contentKey = randombytes(32)
         const iv = randombytes(12)
@@ -159,6 +162,20 @@ define(['N/file', 'N/crypto/random', './lib/forge', './govbillers'], function (f
          * @returns {Object} {cipsBatchDetail, cipsTransactionDetail, fieldLabelMapping}
          */
         opennpiobject: jwe => verify(decrypt(jwe)),
-        uuid: () => cryptoRandom.generateUUID()
+        uuid: () => cryptoRandom.generateUUID(),
+        /**
+         * @returns {string[]} what is missing before the iframe can be used: setup in govbillers and the key files
+         */
+        getsetupgaps: function () {
+            const gaps = gov.getiframesetupgaps()
+            ;[[gov.IFRAME.PRIVATE_KEY_FILE, 'our private key'], [gov.IFRAME.NCHL_PUBLIC_KEY_FILE, 'NCHL certificate']].forEach(([path, what]) => {
+                try {
+                    file.load({id: path})
+                } catch (e) {
+                    gaps.push(what)
+                }
+            })
+            return gaps
+        }
     }
 })

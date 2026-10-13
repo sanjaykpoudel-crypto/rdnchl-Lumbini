@@ -586,7 +586,7 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
                     const journal = record.load({type: record.Type.JOURNAL_ENTRY, id: params.custpage_journal || params.recordid})
                     if (context.request.method === 'GET') {
                         // the iframe is used once NCHL's participant code and keys are set up
-                        form = gov.getiframesetupgaps().length === 0 ? writebillerpage(context, journal) : writebillform(context, journal)
+                        form = jose.getsetupgaps().length === 0 ? writebillerpage(context, journal) : writebillform(context, journal)
                     } else if (params.custpage_step === 'confirm') {
                         form = confirmbill(context, journal)
                     } else if (params.custpage_step === 'review') {

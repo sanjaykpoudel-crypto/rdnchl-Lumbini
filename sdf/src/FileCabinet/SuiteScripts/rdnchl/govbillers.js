@@ -37,19 +37,22 @@ define([], function () {
 
     return {
         BILLERS: BILLERS,
-        // NPI Billers iframe (spec v2). PARTICIPANT_CODE, the key ids and both keys come from NCHL; the key files are
-        // uploaded to the File Cabinet by hand and must never be committed. Production needs NCHL's production URL.
+        // NPI Billers iframe (spec v2), UAT values from NCHL. The key files are made from NCHL's certificates
+        // (NPIBILLERSIGN.pfx: our signing key, PS256; NPIBILLERENC.cer: NCHL's encryption certificate, RSA-OAEP-256 +
+        // A256GCM), kept in the git-ignored rdnchl-keys folder and uploaded by the SDF deploy; never commit them.
+        // Production needs NCHL's production URL, participant code and certificates.
         IFRAME: {
             URL: 'https://uat.connectips.com/billers/billers',
             // messages are only accepted from this origin
             ORIGIN: 'https://uat.connectips.com',
-            PARTICIPANT_CODE: 'lumbiniceramics',
-            // kid of NCHL's NPI Billers public key (JWE header) and of our key (JWS header, if NCHL wants one)
+            PARTICIPANT_CODE: 'LUMBINICERAMICS',
+            // kid for the JWE and JWS headers: NCHL gave none, so the headers carry no kid
             NCHL_KEY_ID: '',
             OWN_KEY_ID: '',
-            // our NPI Billers private key (PEM, PKCS#8 or PKCS#1) and NCHL's NPI Billers public key or certificate (PEM)
-            PRIVATE_KEY_FILE: '/SuiteScripts/rdnchl-keys/npibillers_private.pem',
-            NCHL_PUBLIC_KEY_FILE: '/SuiteScripts/rdnchl-keys/npibillers_nchl_public.pem'
+            // our private key (PEM, from NPIBILLERSIGN.pfx) and NCHL's certificate (PEM, from NPIBILLERENC.cer), saved as
+            // .txt so the File Cabinet keeps them as text; the certificate also checks the signature of NCHL's bill
+            PRIVATE_KEY_FILE: '/SuiteScripts/rdnchl-keys/npibillersign_private_pem.txt',
+            NCHL_PUBLIC_KEY_FILE: '/SuiteScripts/rdnchl-keys/npibillerenc_pem.txt'
         },
         // Government revenue: the category purpose NCHL's biller documentation uses
         PURPOSE: 'GREV',
@@ -65,17 +68,11 @@ define([], function () {
             return BILLERS.hasOwnProperty(key) ? key : null
         },
         /**
-         * @returns {string[]} what is missing before the iframe can be used; until then the API mode is used
+         * @returns {string[]} what is missing before the iframe can be used; until then the API mode is used.
+         * The key files are checked by npibillersjose.getsetupgaps.
          */
         getiframesetupgaps: function () {
-            const gaps = []
-            if (!this.IFRAME.PARTICIPANT_CODE) {
-                gaps.push('participant code')
-            }
-            if (!this.IFRAME.NCHL_KEY_ID) {
-                gaps.push('NCHL key id')
-            }
-            return gaps
+            return this.IFRAME.PARTICIPANT_CODE ? [] : ['participant code']
         }
     }
 })

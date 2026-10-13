@@ -1,1 +1,3 @@
 docs/
+# NCHL key files (made from the NCHL certificates); uploaded by the SDF deploy, never committed
+sdf/src/FileCabinet/SuiteScripts/rdnchl-keys/
