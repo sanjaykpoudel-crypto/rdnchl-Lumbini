@@ -1022,19 +1022,18 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                 const normalized = {
                     cipsBatchResponse: {
                         responseCode: debitFailed ? detail.debitStatus : '000',
-                        responseMessage: detail.debitReasonDesc || (debitFailed && isRealTime
+                        responseMessage: detail.debitReasonDesc || (debitFailed
                             ? 'NCHL debit status ' + detail.debitStatus + ' - debit rejected, nothing was debited' : null),
                         batchId: detail.batchId,
                         debitStatus: detail.debitStatus
                     },
                     cipsTxnResponseList: lines.map(line => {
-                        // NCHL's rule for real-time payments and bills: debit status 000 = debited, any other = debit
-                        // rejected; once debited, credit status 000, 999, empty or DEFER = success. Non-real-time (IPS)
-                        // debits wait for NCHL's settlement session, so an open IPS debit stays in progress.
-                        // ISO 20022 codes (SENT, ACTC, ...) mean on the way; ACSC = settlement completed.
-                        const debitRejected = debitFailed && isRealTime
-                        const settled = !debitFailed && (line.creditStatus === '000' || line.creditStatus === 'ACSC' ||
-                            (isRealTime && (!line.creditStatus || govbillers.PAID_CREDIT_STATUSES.includes(line.creditStatus))))
+                        // NCHL's rule: debit status 000 = debited, any other = debit rejected (NCHL answers the IPS
+                        // debit when the batch is posted too); once debited, credit status 000, 999, empty (real-time)
+                        // or DEFER = success. ISO 20022 codes (SENT, ACTC, ...) mean on the way; ACSC = settled.
+                        const debitRejected = debitFailed
+                        const settled = !debitFailed && (govbillers.PAID_CREDIT_STATUSES.includes(line.creditStatus) ||
+                            (isRealTime && !line.creditStatus))
                         const reason = line.reasonDesc || line.reasonCode
                         const pendingText = debitRejected
                             ? 'NCHL debit status ' + detail.debitStatus + ' - debit rejected, nothing was debited'
@@ -1263,22 +1262,34 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                         result.message = tranDetail.reasonDesc || 'Credit status ' + tranDetail.creditStatus
                     }
                 } else if (resp.hasOwnProperty('cipsBatchResponse')) {
+                    // account payments (real-time and IPS: NCHL answers the debit when the batch is posted) and the
+                    // status lookup in the same shape. NCHL's rule: debit status 000 = debited, any other = debit
+                    // rejected; once debited, credit status 000, 999, empty or DEFER (ACSC for IPS) = paid
+                    const batchResponse = resp.cipsBatchResponse
                     const lines = resp.cipsTxnResponseList || []
                     result.lineMessages = lines.map(line => line.responseMessage)
-                    const batchSuccess = resp.cipsBatchResponse.responseCode === '000'
-                    const allCreditsSuccess = lines.length > 0 && lines.every(line =>
-                        line.responseCode === '000' && (line.creditStatus === undefined || line.creditStatus === '000'))
-                    // ENTR = queued; 999 = NCHL timed out after the debit ("CONFIRM WITH BANK BEFORE RE-POSTING")
-                    const pendingCodes = ['ENTR', '999']
-                    const inProgress = lines.some(line => pendingCodes.includes(line.responseCode) || pendingCodes.includes(line.creditStatus))
-                    if (batchSuccess && allCreditsSuccess) {
-                        result.status = 'SUCCESS'
-                    } else if (inProgress) {
-                        result.status = 'IN-PROGRESS'
-                        result.message = result.lineMessages.join('<br/>')
-                    } else {
+                    const debitStatus = batchResponse.debitStatus
+                    const creditPaid = line => govbillers.PAID_CREDIT_STATUSES.includes(line.creditStatus) ||
+                        ((line.creditStatus === undefined || line.creditStatus === null) && line.responseCode === '000')
+                    if (debitStatus && debitStatus !== '000') {
                         result.status = 'FAILED'
-                        result.message = resp.cipsBatchResponse.responseMessage
+                        const text = batchResponse.responseMessage
+                        // the status lookup already wrote the full sentence; NCHL's own text is added after ours
+                        result.message = text && /debit rejected/.test(text) ? text
+                            : 'Debit status ' + debitStatus + ' - debit rejected, nothing was debited' + (text && text !== 'SUCCESS' ? ': ' + text : '')
+                    } else if (debitStatus === '000' || batchResponse.responseCode === '000') {
+                        if (lines.length > 0 && lines.every(creditPaid)) {
+                            result.status = 'SUCCESS'
+                        } else {
+                            // debited, credit not confirmed yet (ENTR, SENT, ACTC, ...): the money left the account,
+                            // so it is never FAILED (which would allow paying again)
+                            result.status = 'IN-PROGRESS'
+                            result.message = result.lineMessages.join('<br/>')
+                        }
+                    } else {
+                        // no debit answer and the batch was refused (e.g. NOBATCH: NCHL never had it)
+                        result.status = 'FAILED'
+                        result.message = batchResponse.responseMessage
                     }
                 } else if (resp.hasOwnProperty('responseCode') && resp.hasOwnProperty('responseDescription')) {
                     if (resp.responseCode !== '000' || resp.fieldErrors) {
