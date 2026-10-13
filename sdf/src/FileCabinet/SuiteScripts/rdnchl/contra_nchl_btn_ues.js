@@ -10,7 +10,7 @@ define(['N/url', './rdmodule'], function (url, rdmodu) {
                 // custbody_rdnchl_paid_online is not applied to contra vouchers, so an earlier NCHL
                 // transaction (successful, in progress or unknown) is what hides the button
                 const paidOnline = context.newRecord.getValue('custbody_rdnchl_paid_online')
-                if (tranStat === 'B' && !paidOnline && !rdmodu.getactivenchltran(context.newRecord.id)) {
+                if (tranStat === 'B' && !paidOnline && !rdmodu.getactivenchltran(context.newRecord.id) && rdmodu.canpay()) {
                     const pageUrl = url.resolveScript({
                         scriptId: 'customscript_lc_contra_pmt_confirm',
                         deploymentId: 'customdeploy_lc_contra_pmt_confirm',

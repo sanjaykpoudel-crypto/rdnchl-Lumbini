@@ -584,6 +584,13 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
 
         return {
             onRequest: context => {
+                // only Administrators and Allowed Payers (NCHL Payment Settings) may open or submit this page
+                if (!rdmod.canpay()) {
+                    const denied = serverWidget.createForm({title: 'NCHL Payment'})
+                    denied.addPageInitMessage({message: message.create({type: message.Type.ERROR, title: 'Not allowed', message: rdmod.NOT_ALLOWED})})
+                    context.response.writePage({pageObject: denied})
+                    return
+                }
                 let form
                 try {
                     const params = context.request.parameters

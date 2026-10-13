@@ -20,7 +20,7 @@ define(['N/url', './rdmodule'], function (url, rdmodu) {
     return {
         beforeLoad: context => {
             const journal = context.newRecord
-            if (context.type !== 'view' || journal.getValue('approvalstatus') !== '2') {
+            if (context.type !== 'view' || journal.getValue('approvalstatus') !== '2' || !rdmodu.canpay()) {
                 return
             }
             // an NCHL transaction that succeeded, is in progress or is unknown blocks a second payment

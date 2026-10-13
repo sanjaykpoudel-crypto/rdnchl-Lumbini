@@ -113,6 +113,13 @@ define(['N/ui/serverWidget', './mpmod', './rdmodule', 'N/task', 'N/ui/message'],
 
     return {
         onRequest: context => {
+            // only Administrators and Allowed Payers (NCHL Payment Settings) may open or submit this page
+            if (!rdmodu.canpay()) {
+                const denied = serverWidget.createForm({title: 'NCHL Payment'})
+                denied.addPageInitMessage({message: message.create({type: message.Type.ERROR, title: 'Not allowed', message: rdmodu.NOT_ALLOWED})})
+                context.response.writePage({pageObject: denied})
+                return
+            }
             const form = serverWidget.createForm({title: 'Bulk Vendor Payment'})
             try {
                 if (context.request.method === 'POST') {

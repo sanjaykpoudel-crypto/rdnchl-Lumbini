@@ -1,8 +1,8 @@
 /**
  * @NApiVersion 2.1
  */
-define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 'N/crypto/certificate', 'N/error', './govbillers'],
-    function (http, https, file, encode, npiconf, cache, search, record, certificate, error, govbillers) {
+define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 'N/crypto/certificate', 'N/error', './govbillers', 'N/runtime'],
+    function (http, https, file, encode, npiconf, cache, search, record, certificate, error, govbillers, runtime) {
         const TOKEN_CACHE = 'LC_NCHL_TOKENS'
         const LIST_CACHE = 'LC_NCHL_LISTS'
         const REFRESH_TOKEN_MS = 12 * 60 * 60 * 1000
@@ -1068,6 +1068,30 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                 }
                 log.audit('NCHL_STATUS_REFRESHED', {nchltran: nchltranid, batchId: batch.batchId, status: tranStatus.status})
                 return {status: tranStatus.status, message: tranStatus.message, detail: detail}
+            },
+            NOT_ALLOWED: 'You are not allowed to make NCHL payments. An Administrator can add you to Allowed Payers ' +
+                'in NCHL Payment Settings. Nothing was paid.',
+            /**
+             * Who may pay through NCHL: Administrators always, anyone else only when listed in Allowed Payers of an
+             * active NCHL Payment Settings record (no record or an empty list: Administrators only). Checked by every
+             * Pay Online button and again by every payment page, so a page opened by its link cannot pay either.
+             * @returns {boolean}
+             */
+            canpay: function () {
+                const user = runtime.getCurrentUser()
+                if (user.roleId === 'administrator' || String(user.role) === '3') {
+                    return true
+                }
+                let allowed = false
+                search.create({
+                    type: 'customrecord_lc_nchl_pay_settings',
+                    filters: [['isinactive', 'is', 'F']],
+                    columns: ['custrecord_lc_nchlset_payers']
+                }).run().each(result => {
+                    allowed = String(result.getValue('custrecord_lc_nchlset_payers') || '').split(',').includes(String(user.id))
+                    return !allowed
+                })
+                return allowed
             },
             /**
              * @param {string|number} nchltranid
