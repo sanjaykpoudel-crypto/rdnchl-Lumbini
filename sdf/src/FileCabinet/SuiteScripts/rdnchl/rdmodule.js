@@ -1247,13 +1247,33 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                     const tranDetail = resp.cipsTransactionDetail || resp.nchlIpsTransactionDetail || {}
                     const fieldErrors = (resp.responseResult.fieldErrors || []).map(fe => fe.message).filter(Boolean)
                     result.message = fieldErrors.length > 0 ? fieldErrors.join('<br/>') : resp.responseResult.responseDescription
-                    // NCHL's rule: debit status 000 is a successful debit, any other debit status a rejected (failed)
-                    // debit; once debited, credit status 000, 999, empty or DEFER is a success
+                    // The debit and credit status decide; the response code only fills in what NCHL did not send.
+                    // NCHL's rule: debit status 000 = debited, any other debit status = rejected (failed) debit; once
+                    // debited, credit status 000, 999, DEFER (or empty) = success.
+                    const responseOk = resp.responseResult.responseCode === '000'
                     if (batchDetail.debitStatus && batchDetail.debitStatus !== '000') {
                         result.status = 'FAILED'
                         result.message = (batchDetail.debitReasonDesc || 'Debit status ' + batchDetail.debitStatus) +
                             ' - debit rejected, nothing was debited'
-                    } else if (batchDetail.debitStatus !== '000' && resp.responseResult.responseCode !== '000') {
+                    } else if (batchDetail.debitStatus === '000' && tranDetail.creditStatus) {
+                        // debit and credit both answered: their reasons, not responseDescription, explain the status
+                        if (govbillers.PAID_CREDIT_STATUSES.includes(tranDetail.creditStatus)) {
+                            result.status = 'SUCCESS'
+                            result.message = 'Debit ' + (batchDetail.debitReasonDesc || '000') + ', credit ' +
+                                (tranDetail.reasonDesc || tranDetail.creditStatus) + ' (' + tranDetail.creditStatus + ')'
+                        } else {
+                            result.status = 'IN-PROGRESS'
+                            result.message = tranDetail.reasonDesc || 'Credit status ' + tranDetail.creditStatus
+                        }
+                    } else if (batchDetail.debitStatus === '000') {
+                        // debited, no credit status: the response code decides, but never FAILED (the money left the
+                        // account, so paying again could pay twice)
+                        result.status = responseOk ? 'SUCCESS' : 'IN-PROGRESS'
+                        if (!responseOk) {
+                            result.message += ' - debited, credit not confirmed'
+                        }
+                    } else if (!responseOk) {
+                        // no debit status: the response code decides
                         result.status = 'FAILED'
                     } else if (!tranDetail.creditStatus || govbillers.PAID_CREDIT_STATUSES.includes(tranDetail.creditStatus)) {
                         result.status = 'SUCCESS'
