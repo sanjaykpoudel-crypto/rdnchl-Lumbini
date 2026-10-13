@@ -1053,11 +1053,16 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                     const tranDetail = resp.cipsTransactionDetail || resp.nchlIpsTransactionDetail || {}
                     const fieldErrors = (resp.responseResult.fieldErrors || []).map(fe => fe.message).filter(Boolean)
                     result.message = fieldErrors.length > 0 ? fieldErrors.join('<br/>') : resp.responseResult.responseDescription
-                    if (resp.responseResult.responseCode !== '000') {
+                    if (['999', 'ENTR'].includes(batchDetail.debitStatus)) {
+                        // no final answer on the debit yet, even when the response code says failed (NCHL answered
+                        // E999 FAILED with debitStatus 999): the money may still move, so it must not be paid again
+                        result.status = 'IN-PROGRESS'
+                        result.message = (batchDetail.debitReasonDesc || 'Debit status ' + batchDetail.debitStatus) +
+                            ' - not final, confirm with NCHL before paying again'
+                    } else if (resp.responseResult.responseCode !== '000') {
                         result.status = 'FAILED'
                     } else if (batchDetail.debitStatus && batchDetail.debitStatus !== '000') {
-                        // 999 / ENTR: no final answer on the debit yet, so it must not be paid again
-                        result.status = ['999', 'ENTR'].includes(batchDetail.debitStatus) ? 'IN-PROGRESS' : 'FAILED'
+                        result.status = 'FAILED'
                         result.message = batchDetail.debitReasonDesc || 'Debit status ' + batchDetail.debitStatus
                     } else if (!tranDetail.creditStatus || govbillers.PAID_CREDIT_STATUSES.includes(tranDetail.creditStatus)) {
                         result.status = 'SUCCESS'
