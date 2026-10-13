@@ -2,13 +2,13 @@
  * @NApiVersion 2.1
  * @NScriptType Suitelet
  */
-// Pays a government bill (IRD, SSF, CIT) from an approved journal through NCHL, in one of two ways the user chooses on
-// the journal (and can switch between on the page):
-// - API (Pay Online): the user types the bill reference, Fetch Bill lodges it (NCHL and the biller check it, nothing is
+// Pays a government bill (IRD, SSF, CIT) from an approved journal through NCHL, in one of two ways the user can switch
+// between on the page:
+// - API: the user types the bill reference, Fetch Bill lodges it (NCHL and the biller check it, nothing is
 //   paid) and Make Payment confirms it
-// - NPI Billers iframe (Pay via NCHL Page, mode=iframe, once NCHL's participant code and keys are set in
-//   govbillers.IFRAME): the user finds and confirms the bill in NCHL's page, NCHL hands it back (encrypted npiObject)
-//   and Make Payment confirms it with our bank as debtor (/api/npibiller/confirmbillerpay.do)
+// - NPI Billers iframe (spec v2, the default once NCHL's participant code and keys are set in govbillers.IFRAME): the
+//   user finds and confirms the bill in NCHL's page, NCHL hands it back (encrypted npiObject) and Make Payment confirms
+//   it with our bank as debtor (/api/npibiller/confirmbillerpay.do)
 // The journal's credit line is the paying bank; its amount must equal the bill.
 define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect', 'N/cache', 'N/url', 'N/runtime', './rdmodule', './govbillers', './npibillersjose'],
     function (serverWidget, record, search, message, redirect, cache, url, runtime, rdmod, gov, jose) {
@@ -613,9 +613,9 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
                     const params = context.request.parameters
                     const journal = record.load({type: record.Type.JOURNAL_ENTRY, id: params.custpage_journal || params.recordid})
                     if (context.request.method === 'GET') {
-                        // the journal's Pay Online opens the bill reference form as before; its Pay via NCHL Page button
-                        // (mode=iframe) opens NCHL's billers page once NCHL's participant code and keys are set up
-                        const useIframe = params.mode === 'iframe' && jose.getsetupgaps().length === 0
+                        // NCHL's billers page once its participant code and keys are set up, unless the user chose to
+                        // type the bill reference (mode=api)
+                        const useIframe = params.mode !== 'api' && jose.getsetupgaps().length === 0
                         form = useIframe ? writebillerpage(context, journal) : writebillform(context, journal)
                     } else if (params.custpage_step === 'confirm') {
                         form = confirmbill(context, journal)
