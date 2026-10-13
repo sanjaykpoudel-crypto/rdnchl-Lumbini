@@ -333,11 +333,11 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
             addhidden(form, 'custpage_step', 'review')
             addhidden(form, 'custpage_session', session.sessionId)
             addhidden(form, 'custpage_npiobject', '')
-            // below the field groups, so NCHL's page gets the full width
+            // below the field groups and as wide as the window: NetSuite keeps the cell narrow
             const billers = form.addField({id: 'custpage_billers', label: 'NCHL Billers', type: serverWidget.FieldType.INLINEHTML})
             billers.updateLayoutType({layoutType: serverWidget.FieldLayoutType.OUTSIDEBELOW})
             billers.defaultValue = `<iframe id="npibillers" src="${escapehtml(session.url)}"
-                    style="width:100%;height:760px;border:1px solid #d0d7de;margin-top:12px"></iframe>
+                    style="width:calc(100vw - 48px);height:760px;border:1px solid #d0d7de;margin-top:12px"></iframe>
                     <script>
                     (function () {
                         var origin = ${JSON.stringify(gov.IFRAME.ORIGIN)}, sessionId = ${JSON.stringify(session.sessionId)}
