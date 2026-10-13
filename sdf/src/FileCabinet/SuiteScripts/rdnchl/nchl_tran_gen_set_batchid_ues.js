@@ -79,7 +79,8 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                         label: 'Check Status',
                         functionName: `gettranstatus('${JSON.stringify(fnOpt)}')`
                     })*/
-                    let status = 'empty', showreason = false, reasonmsg = 'empty'
+                    // status: text shown on the page (for bills the explanation); statusCode: SUCCESS, FAILED, ...
+                    let status = 'empty', statusCode = '', showreason = false, reasonmsg = 'empty'
                     const tranresp = context.newRecord.getValue('custrecord_nchl_tran_response')
                     let msgType = message.Type.ERROR, msgTitle = 'ERROR', msgDetail = ''
                     if (tranresp) {
@@ -91,6 +92,7 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                             // not JSON: the request to NCHL failed before a response was received
                         }
                         status = isBiller ? tranStatus.message : tranStatus.status
+                        statusCode = tranStatus.status
                         if (tranStatus.status === 'FAILED') {
                             showreason = true
                             reasonmsg = tranStatus.message
@@ -137,7 +139,7 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                     const isBillerResponse = /"responseResult"/.test(tranresp || '') &&
                         !/"npiobject"/.test(context.newRecord.getValue('custrecord_nchl_tran_raw_detail') || '')
                     const billNotPaid = !tranresp && rdmodu.isbillnotpaid(context.newRecord.getValue('custrecord_nchl_tran_raw_detail'))
-                    if ((mode === '1' || mode === '2') && !isBillerResponse && !billNotPaid && status !== 'SUCCESS') {
+                    if ((mode === '1' || mode === '2') && !isBillerResponse && !billNotPaid && statusCode !== 'SUCCESS') {
                         const resyncLink = url.resolveScript({
                             scriptId: 'customscript_lc_get_nchl_tran_detail',
                             deploymentId: 'customdeploy_lc_get_nchl_tran_detail',
