@@ -2,7 +2,7 @@
  * @NApiVersion 2.1
  * @NScriptType UserEventScript
  */
-define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtime', 'N/search', 'N/error'], function (record, config, rdmodu, message, url, runtime, search, error) {
+define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtime', 'N/search'], function (record, config, rdmodu, message, url, runtime, search) {
         /**
          * Keeps the stored Status (custrecord_lc_nchl_status, shown in the NCHL transaction list) in line with the
          * saved NCHL response. Its own update comes back here as xedit and stops because nothing changed.
@@ -15,12 +15,9 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
             const types = context.UserEventType
             const byPerson = !rdmodu.isscripted()
             if (context.type === types.DELETE || ([types.CREATE, types.COPY, types.EDIT, types.XEDIT].includes(context.type) && byPerson)) {
-                throw error.create({
-                    name: 'NCHL_TRANSACTION_LOCKED',
-                    message: 'NCHL transactions are created and updated only by the NCHL payment scripts and cannot be ' +
-                        'added, edited or deleted.',
-                    notifyOff: true
-                })
+                // a plain message: NetSuite shows a thrown SuiteScriptError as raw JSON with its stack
+                throw 'NCHL transactions are created and updated only by the NCHL payment scripts and cannot be ' +
+                    'added, edited or deleted.'
             }
         }
 

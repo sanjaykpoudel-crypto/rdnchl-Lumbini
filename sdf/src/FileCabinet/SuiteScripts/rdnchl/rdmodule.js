@@ -1109,7 +1109,8 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                 }
                 const lock = this.getpaidlock(context.oldRecord || context.newRecord)
                 if (lock) {
-                    throw error.create({name: 'NCHL_PAID_LOCKED', message: lock, notifyOff: true})
+                    // a plain message: NetSuite shows a thrown SuiteScriptError as raw JSON with its stack
+                    throw lock
                 }
             },
             /**
