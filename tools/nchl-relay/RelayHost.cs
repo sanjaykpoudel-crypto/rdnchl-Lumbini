@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 
 namespace NchlRelay;
 
-/// <summary>Forwards every request received on ListenPort to TargetUrl and streams the answer back.</summary>
+/// <summary>Forwards every request received on ListenPort to TargetUrl (or a PathTargets host) and streams the answer back.</summary>
 public sealed class RelayHost
 {
     static readonly HashSet<string> HopByHopHeaders = new(StringComparer.OrdinalIgnoreCase)
@@ -41,6 +41,17 @@ public sealed class RelayHost
         }
         client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(config.TimeoutSeconds) };
         var allowedIps = new HashSet<string>(config.AllowedClientIps ?? []);
+        var pathTargets = new Dictionary<string, string>();
+        foreach (var (prefix, target) in config.PathTargets ?? [])
+        {
+            var cleanPrefix = "/" + prefix.Trim('/');
+            var cleanTarget = target.TrimEnd('/');
+            if (cleanPrefix == "/" || !Uri.TryCreate(cleanTarget, UriKind.Absolute, out _))
+            {
+                throw new InvalidOperationException($"PathTargets entry \"{prefix}\": \"{target}\" in {RelayConfig.ConfigPath} is not a path prefix and URL.");
+            }
+            pathTargets[cleanPrefix] = cleanTarget;
+        }
 
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
@@ -50,9 +61,10 @@ public sealed class RelayHost
             kestrel.Limits.MaxRequestBodySize = 10 * 1024 * 1024;
         });
         app = builder.Build();
-        app.Run(context => ForwardAsync(context, targetBase, allowedIps));
+        app.Run(context => ForwardAsync(context, targetBase, pathTargets, allowedIps));
         await app.StartAsync();
         Log.Write($"STARTED port {config.ListenPort} -> {targetBase}" +
+                  string.Concat(pathTargets.Select(route => $", {route.Key} -> {route.Value}")) +
                   (allowedIps.Count > 0 ? $" (allowed IPs: {string.Join(", ", allowedIps)})" : " (any client IP)"));
     }
 
@@ -69,7 +81,7 @@ public sealed class RelayHost
         Log.Write("STOPPED");
     }
 
-    async Task ForwardAsync(HttpContext context, string targetBase, HashSet<string> allowedIps)
+    async Task ForwardAsync(HttpContext context, string defaultTarget, Dictionary<string, string> pathTargets, HashSet<string> allowedIps)
     {
         var started = DateTime.UtcNow;
         var request = context.Request;
@@ -93,7 +105,18 @@ public sealed class RelayHost
         {
             try
             {
-                using var outgoing = new HttpRequestMessage(new HttpMethod(request.Method), targetBase + request.Path + request.QueryString);
+                var targetBase = defaultTarget;
+                var path = request.Path;
+                foreach (var (prefix, target) in pathTargets)
+                {
+                    if (request.Path.StartsWithSegments(prefix, StringComparison.OrdinalIgnoreCase, out var rest))
+                    {
+                        targetBase = target;
+                        path = rest;
+                        break;
+                    }
+                }
+                using var outgoing = new HttpRequestMessage(new HttpMethod(request.Method), targetBase + path + request.QueryString);
                 if (request.ContentLength > 0 || request.Headers.ContainsKey("Transfer-Encoding"))
                 {
                     var body = new MemoryStream();

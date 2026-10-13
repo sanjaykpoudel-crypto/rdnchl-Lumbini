@@ -11,6 +11,13 @@ public sealed class RelayConfig
     /// <summary>NCHL base URL every request is forwarded to, e.g. https://nchl-host:port</summary>
     public string TargetUrl { get; set; } = "https://CHANGE-ME-NCHL-HOST";
 
+    /// <summary>
+    /// Other NCHL hosts reached through a path prefix, which is removed before forwarding, e.g.
+    /// "/devnpi": "https://devnpi.connectips.com" sends /devnpi/oauth/token to https://devnpi.connectips.com/oauth/token.
+    /// Requests without a listed prefix go to TargetUrl.
+    /// </summary>
+    public Dictionary<string, string> PathTargets { get; set; } = new();
+
     /// <summary>If not empty, only these client IPs may use the relay (e.g. NetSuite's outbound IPs).</summary>
     public string[] AllowedClientIps { get; set; } = [];
 
