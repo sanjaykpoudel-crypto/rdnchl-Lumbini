@@ -20,5 +20,10 @@
       <isinactive>F</isinactive>
       <value>CIT (employee contribution)</value>
     </customvalue>
+    <customvalue scriptid="val_lc_gov_test">
+      <abbreviation></abbreviation>
+      <isinactive>F</isinactive>
+      <value>TEST NTC top-up (UAT only)</value>
+    </customvalue>
   </customvalues>
 </customlist>

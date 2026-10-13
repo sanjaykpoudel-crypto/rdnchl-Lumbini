@@ -32,6 +32,14 @@ define([], function () {
                 {id: 'refId', label: 'Submission Number', maxLength: 35},
                 {id: 'freeCode2', label: 'Office Code', maxLength: 100}
             ]
+        },
+        // UAT only, to test the iframe payment end to end (NTC's minimum top-up is Rs 10). Remove before go-live,
+        // with its list value val_lc_gov_test.
+        TEST: {
+            label: 'TEST NTC top-up (UAT only)',
+            appId: 'MER-1544-APP-1',
+            amountFromBiller: false,
+            fields: [{id: 'refId', label: 'Mobile Number', maxLength: 10}]
         }
     }
 

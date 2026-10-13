@@ -449,7 +449,9 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
                 problems.push(`This journal pays ${payment.biller.label} (${payment.biller.appId}); the bill confirmed in NCHL is for ${bill.appId}.`)
             }
             const billAmount = round(bill.amount)
-            if (billAmount !== payment.amount || round(npiBatch.batchAmount) !== payment.amount) {
+            // NCHL's charge (chargeAmount) comes on top of the bill and may be included in the batch amount
+            const batchAmount = round(npiBatch.batchAmount)
+            if (billAmount !== payment.amount || (batchAmount !== billAmount && batchAmount !== round(billAmount + round(bill.chargeAmount)))) {
                 problems.push(`The bill is ${billAmount}, the journal ${payment.amount}. Correct the journal (or the bill) and try again.`)
             }
             const paidBefore = npiBatch.batchId ? findnpibatch(npiBatch.batchId) : null
