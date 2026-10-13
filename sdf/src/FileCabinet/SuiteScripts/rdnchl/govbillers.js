@@ -43,7 +43,7 @@ define([], function () {
             URL: 'https://uat.connectips.com/billers/billers',
             // messages are only accepted from this origin
             ORIGIN: 'https://uat.connectips.com',
-            PARTICIPANT_CODE: '',
+            PARTICIPANT_CODE: 'lumbiniceramics',
             // kid of NCHL's NPI Billers public key (JWE header) and of our key (JWS header, if NCHL wants one)
             NCHL_KEY_ID: '',
             OWN_KEY_ID: '',
