@@ -25,5 +25,10 @@
       <isinactive>F</isinactive>
       <value>TEST top-up, internet, TV (UAT only)</value>
     </customvalue>
+    <customvalue scriptid="val_lc_gov_test_nrt">
+      <abbreviation></abbreviation>
+      <isinactive>F</isinactive>
+      <value>TESTNRT non-real-time top-up (UAT only)</value>
+    </customvalue>
   </customvalues>
 </customlist>

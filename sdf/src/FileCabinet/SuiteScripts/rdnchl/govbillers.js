@@ -44,6 +44,16 @@ define([], function () {
             anyIframeAppId: true,
             amountFromBiller: false,
             fields: [{id: 'refId', label: 'Mobile Number', maxLength: 10}]
+        },
+        // UAT only: the same test billers paid non-real-time (NRT), which NCHL otherwise uses only above NPR 20 lakh.
+        // Remove before go-live, with its list value val_lc_gov_test_nrt.
+        TESTNRT: {
+            label: 'TESTNRT non-real-time top-up (UAT only)',
+            appId: 'MER-1544-APP-1',
+            anyIframeAppId: true,
+            forceNrt: true,
+            amountFromBiller: false,
+            fields: [{id: 'refId', label: 'Mobile Number', maxLength: 10}]
         }
     }
 

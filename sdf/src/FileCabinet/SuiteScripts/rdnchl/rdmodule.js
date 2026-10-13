@@ -840,6 +840,20 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                 return JSON.parse(response.body)
             },
             /**
+             * The batch and transaction of an npiObject: real-time (cipsBatchDetail / cipsTransactionDetail) or
+             * non-real-time (nchlIpsBatchDetail / nchlIpsTransactionDetail, tranType NRT)
+             * @param {Object} npi npiObject
+             * @returns {{nrt: boolean, batch: Object, transaction: Object}}
+             */
+            npiparts: function (npi) {
+                const nrt = !!(npi && (npi.nchlIpsBatchDetail || npi.nchlIpsTransactionDetail))
+                return {
+                    nrt: nrt,
+                    batch: (nrt ? npi.nchlIpsBatchDetail : npi && npi.cipsBatchDetail) || {},
+                    transaction: (nrt ? npi.nchlIpsTransactionDetail : npi && npi.cipsTransactionDetail) || {}
+                }
+            },
+            /**
              * Pays a bill confirmed in the NPI Billers iframe (spec v2, 4.7): the npiObject's batch with our bank as
              * debtor and its transaction, signed with the NPI certificate; sent with NCHL's NPI Billers login
              * @param {string|number} nchltranid NCHL transaction holding the batch and instruction
@@ -850,17 +864,21 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                 const batch = JSON.parse(nchlTranRecord.getValue('custrecord_nchl_tran_batch'))
                 const instruction = JSON.parse(nchlTranRecord.getValue('custrecord_nchl_tran_instruction'))
                 const batchstr = `${batch.batchId},${batch.debtorAgent},${batch.debtorBranch},${batch.debtorAccount},${batch.batchAmount},${batch.batchCrncy}`
-                const transtr = `${instruction.id},${instruction.instructionId},${instruction.endToEndId},${instruction.appId},${instruction.refId},${instruction.amount}`
+                // non-real-time (spec 4.7): its own URL and body keys, tranType NRT, the category purpose of the
+                // npiObject unchanged, and a shorter transaction string (instructionId, appId, refId)
+                const nrt = this.npiparts(JSON.parse(nchlTranRecord.getValue('custrecord_nchl_tran_raw_detail') || '{}').npiobject).nrt
+                const transtr = nrt
+                    ? `${instruction.instructionId},${instruction.appId},${instruction.refId}`
+                    : `${instruction.id},${instruction.instructionId},${instruction.endToEndId},${instruction.appId},${instruction.refId},${instruction.amount}`
+                const token = this.sigtoken({batchstr: batchstr, transtr: transtr, conn: 'BILLER'})
                 const response = this.callnchl({
                     nchltranid: nchltranid,
                     conn: 'BILLER',
-                    action: 'BILLER CONFIRM',
-                    path: '/api/npibiller/confirmbillerpay.do',
-                    body: {
-                        cipsBatchDetail: batch,
-                        cipsTransactionDetail: instruction,
-                        token: this.sigtoken({batchstr: batchstr, transtr: transtr, conn: 'BILLER'})
-                    }
+                    action: nrt ? 'BILLER CONFIRM NRT' : 'BILLER CONFIRM',
+                    path: nrt ? '/api/npibiller/ips/confirmbillerpay.do' : '/api/npibiller/confirmbillerpay.do',
+                    body: nrt
+                        ? {nchlIpsTransactionDetail: instruction, nchlIpsBatchDetail: Object.assign({}, batch, {tranType: 'NRT'}), token: token}
+                        : {cipsBatchDetail: batch, cipsTransactionDetail: instruction, token: token}
                 })
                 return JSON.parse(response.body)
             },

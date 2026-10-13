@@ -68,8 +68,9 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
          * Reads the biller, the paying bank and the amount from the journal, so what is sent to NCHL comes from
          * NetSuite and not from the submitted form
          * @param {record.Record} journal
+         * @param {boolean} [viaIframe] paid through NCHL's billers page, which also takes non-real-time (NRT) payments
          */
-        function getgovpayment(journal) {
+        function getgovpayment(journal, viaIframe) {
             const problems = []
             const billerKey = gov.getbillerkey(journal.getText(BILLER_FIELD))
             if (!billerKey) {
@@ -97,10 +98,14 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
             if (creditLines === 0) {
                 problems.push('No paying (credit) bank line')
             }
-            if (amount > REAL_TIME_LIMIT) {
-                problems.push(`The amount is above the NCHL real-time limit (${REAL_TIME_LIMIT}). Non-real-time government payments are not supported yet.`)
+            const biller = billerKey ? gov.BILLERS[billerKey] : null
+            // NCHL's billers page pays above the real-time limit (NPR 20 lakh) as non-real-time (NRT); the typed bill
+            // reference form is real-time only. The UAT TESTNRT biller forces NRT to test it with a top-up.
+            const nrt = !!viaIframe && ((biller && biller.forceNrt) || amount > REAL_TIME_LIMIT)
+            if (!viaIframe && amount > REAL_TIME_LIMIT) {
+                problems.push(`The amount is above the NCHL real-time limit (${REAL_TIME_LIMIT}); pay it through NCHL's billers page (non-real-time).`)
             }
-            return {billerKey, biller: billerKey ? gov.BILLERS[billerKey] : null, debtorBank, amount, problems}
+            return {billerKey, biller, debtorBank, amount, nrt, problems}
         }
 
         function adddetail(form, journal, payment) {
@@ -113,7 +118,7 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
             addinline(form, {id: 'custpage_amount', label: 'Amount', type: serverWidget.FieldType.CURRENCY, container: 'primaryinformation'})
                 .defaultValue = payment.amount
             addinline(form, {id: 'custpage_ptype', label: 'Payment Type', type: serverWidget.FieldType.TEXT, container: 'primaryinformation'})
-                .defaultValue = 'Real-Time'
+                .defaultValue = payment.nrt ? 'Non-Real-Time (NRT)' : 'Real-Time'
 
             form.addFieldGroup({id: 'debtor', label: 'DEBIT DETAIL'})
             const debtor = payment.debtorBank
@@ -294,18 +299,22 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
         /**
          * Builds the NPI Billers landing URL with a new session (spec v2, 4.1-4.3)
          */
-        function newsession(journal) {
+        function newsession(journal, payment) {
             const sessionId = `${gov.IFRAME.PARTICIPANT_CODE}_${jose.uuid()}`
-            const params = {
-                participant_code: gov.IFRAME.PARTICIPANT_CODE,
+            const claims = {participant_code: gov.IFRAME.PARTICIPANT_CODE, session_id: sessionId, channel: 'web'}
+            if (payment.nrt) {
+                // non-real-time (spec 4.4): txn_type NRT and the paying bank's code, which must stay the debtor bank
+                // of the confirm request
+                claims.txn_type = 'NRT'
+                claims.bank_id = JSON.parse(payment.debtorBank.custrecord_rdnchl_bank_prop).value
+            }
+            const params = Object.assign({}, claims, {
                 landing_page: 'biller-all',
-                channel: 'web',
-                session_id: sessionId,
-                token: jose.maketoken({participant_code: gov.IFRAME.PARTICIPANT_CODE, session_id: sessionId, channel: 'web'}),
+                token: jose.maketoken(claims),
                 lang: 'en',
                 display_error: 'embedded',
                 web_type: 'iframe'
-            }
+            })
             // only the session this page opened for this journal is accepted back
             sessioncache().put({key: 'journal_' + journal.id, value: sessionId, ttl: SESSION_SECONDS})
             const query = Object.keys(params).map(key => key + '=' + encodeURIComponent(params[key])).join('&')
@@ -322,13 +331,13 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
                 showmessage(form, message.Type.WARNING, blockReason.title, blockReason.message)
                 return form
             }
-            const payment = getgovpayment(journal)
+            const payment = getgovpayment(journal, true)
             adddetail(form, journal, payment)
             if (payment.problems.length > 0) {
                 showmessage(form, message.Type.ERROR, 'Cannot pay this journal', payment.problems.join('<br>'))
                 return form
             }
-            const session = newsession(journal)
+            const session = newsession(journal, payment)
             addhidden(form, 'custpage_journal', journal.id)
             addhidden(form, 'custpage_step', 'review')
             addhidden(form, 'custpage_session', session.sessionId)
@@ -431,7 +440,7 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
                 showmessage(form, message.Type.WARNING, blockReason.title, blockReason.message)
                 return form
             }
-            const payment = getgovpayment(journal)
+            const payment = getgovpayment(journal, true)
             adddetail(form, journal, payment)
             if (payment.problems.length > 0) {
                 showmessage(form, message.Type.ERROR, 'Cannot pay this journal', payment.problems.join('<br>'))
@@ -442,9 +451,14 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
                 return form
             }
             const npi = readnpiobject(params.custpage_npiobject)
-            const bill = npi.cipsTransactionDetail || {}
-            const npiBatch = npi.cipsBatchDetail || {}
+            const npiParts = rdmod.npiparts(npi)
+            const bill = npiParts.transaction
+            const npiBatch = npiParts.batch
             const problems = []
+            if (npiParts.nrt !== payment.nrt) {
+                problems.push(`NCHL returned a ${npiParts.nrt ? 'non-real-time' : 'real-time'} bill; this journal is paid ` +
+                    `${payment.nrt ? 'non-real-time (NRT)' : 'real-time'}.`)
+            }
             const knownAppIds = [payment.biller.appId].concat(payment.biller.iframeAppIds || [])
             if (!payment.biller.anyIframeAppId && !knownAppIds.includes(bill.appId)) {
                 problems.push(`This journal pays ${payment.biller.label} (${payment.biller.appId}); the bill confirmed in NCHL is for ${bill.appId}.`)
@@ -481,7 +495,8 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
             }
             const debtor = payment.debtorBank
             const raw = {
-                paymenttype: 'CIPS',
+                // the NCHL transaction's mode: real-time (CIPS) or non-real-time (IPS), which Resync looks up
+                paymenttype: npiParts.nrt ? 'IPS' : 'CIPS',
                 amount: billAmount,
                 purpose: gov.PURPOSE,
                 drbank: JSON.parse(debtor.custrecord_rdnchl_bank_prop).value,
@@ -501,7 +516,8 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
             addhidden(form, 'custpage_nchltran', nchlTranId)
             addhidden(form, 'custpage_step', 'confirm')
             showmessage(form, message.Type.CONFIRMATION, 'Step 2 of 2',
-                'Check the bill and the paying bank, then click Make Payment to pay ' + payment.amount + '.')
+                'Check the bill and the paying bank, then click Make Payment to pay ' + payment.amount +
+                (npiParts.nrt ? ' (non-real-time: NCHL settles it in its next session).' : '.'))
             form.addSubmitButton({label: 'Make Payment'})
             return form
         }
@@ -534,11 +550,13 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
                 showmessage(form, message.Type.WARNING, blockReason.title, blockReason.message)
                 return form
             }
-            const payment = getgovpayment(journal)
             const fromIframe = raw.stage === 'REVIEWED'
-            const bill = (fromIframe ? raw.npiobject.cipsTransactionDetail : raw.lodgeResponse && raw.lodgeResponse.cipsTransactionDetail) || {}
+            const payment = getgovpayment(journal, fromIframe)
+            const bill = (fromIframe ? rdmod.npiparts(raw.npiobject).transaction
+                : raw.lodgeResponse && raw.lodgeResponse.cipsTransactionDetail) || {}
             const billAmount = round(bill.amount)
-            if (payment.problems.length > 0 || billAmount !== payment.amount || payment.billerKey !== raw.billertype) {
+            const modeChanged = fromIframe && rdmod.npiparts(raw.npiobject).nrt !== payment.nrt
+            if (payment.problems.length > 0 || billAmount !== payment.amount || payment.billerKey !== raw.billertype || modeChanged) {
                 adddetail(form, journal, payment)
                 showmessage(form, message.Type.ERROR, 'Journal changed', 'The journal no longer matches the bill. Open Pay Online again.')
                 return form
