@@ -333,10 +333,11 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
             addhidden(form, 'custpage_step', 'review')
             addhidden(form, 'custpage_session', session.sessionId)
             addhidden(form, 'custpage_npiobject', '')
-            form.addFieldGroup({id: 'bill', label: 'BILL'})
-            form.addField({id: 'custpage_billers', label: 'NCHL Billers', type: serverWidget.FieldType.INLINEHTML, container: 'bill'})
-                .defaultValue = `<iframe id="npibillers" src="${escapehtml(session.url)}"
-                    style="width:100%;height:720px;border:1px solid #d0d7de"></iframe>
+            // below the field groups, so NCHL's page gets the full width
+            const billers = form.addField({id: 'custpage_billers', label: 'NCHL Billers', type: serverWidget.FieldType.INLINEHTML})
+            billers.updateLayoutType({layoutType: serverWidget.FieldLayoutType.OUTSIDEBELOW})
+            billers.defaultValue = `<iframe id="npibillers" src="${escapehtml(session.url)}"
+                    style="width:100%;height:760px;border:1px solid #d0d7de;margin-top:12px"></iframe>
                     <script>
                     (function () {
                         var origin = ${JSON.stringify(gov.IFRAME.ORIGIN)}, sessionId = ${JSON.stringify(session.sessionId)}
