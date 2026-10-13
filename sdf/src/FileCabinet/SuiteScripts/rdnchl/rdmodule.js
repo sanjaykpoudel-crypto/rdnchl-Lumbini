@@ -1092,9 +1092,10 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                     }
                 } else if (resp.hasOwnProperty('responseCode') && resp.hasOwnProperty('responseMessage')) {
                     // NCHL refused the request itself (e.g. E001 INVALID IP ADDRESS): nothing was processed.
-                    // 999 is a timeout, whose result is not known.
+                    // 999 (timeout) and E999 (NCHL's general error, HTTP 500) do not say whether the debit happened,
+                    // so they stay UNKNOWN and block another payment until NCHL confirms.
                     result.message = resp.responseMessage
-                    if (resp.responseCode !== '000' && resp.responseCode !== '999') {
+                    if (resp.responseCode !== '000' && !['999', 'E999'].includes(resp.responseCode)) {
                         result.status = 'FAILED'
                     }
                 }
