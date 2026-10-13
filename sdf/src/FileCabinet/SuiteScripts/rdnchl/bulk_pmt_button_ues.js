@@ -3,9 +3,10 @@
  * @NScriptType UserEventScript
  */
 // Pay Online button on approved journals:
-// - government payments (NCHL Government Payment set): one bill, paid from the credit (bank) line
+// - government payments (NCHL Government Payment set): one bill, paid from the credit (bank) line. Pay Online types the
+//   bill reference; Pay via NCHL Page (once NCHL's billers page is set up) finds the bill in NCHL's page
 // - salary: debit lines for employees, one credit line on the paying bank
-define(['N/url', './rdmodule'], function (url, rdmodu) {
+define(['N/url', './rdmodule', './govbillers'], function (url, rdmodu, gov) {
     function hasemployeedebit(journal) {
         const entityIds = []
         for (let i = 0; i < journal.getLineCount({sublistId: 'line'}); i++) {
@@ -35,12 +36,21 @@ define(['N/url', './rdmodule'], function (url, rdmodu) {
             } else {
                 return
             }
-            const pageUrl = url.resolveScript(Object.assign(page, {params: {recordid: journal.id}}))
+            const pageUrl = url.resolveScript(Object.assign({}, page, {params: {recordid: journal.id}}))
             context.form.addButton({
                 id: 'custpage_btn_payment',
                 label: 'Pay Online',
                 functionName: `window.open('${pageUrl}')`
             })
+            // the page itself falls back to the bill reference form when a key file is missing
+            if (page.scriptId === 'customscript_lc_gov_pay' && gov.getiframesetupgaps().length === 0) {
+                const nchlPageUrl = url.resolveScript(Object.assign({}, page, {params: {recordid: journal.id, mode: 'iframe'}}))
+                context.form.addButton({
+                    id: 'custpage_btn_payment_npi',
+                    label: 'Pay via NCHL Page',
+                    functionName: `window.open('${nchlPageUrl}')`
+                })
+            }
         }
     }
 })
