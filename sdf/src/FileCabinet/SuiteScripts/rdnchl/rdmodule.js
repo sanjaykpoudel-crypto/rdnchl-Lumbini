@@ -1102,6 +1102,18 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                 return result
             },
             /**
+             * Status shown in the NCHL transaction list, worked out the same way as on the record page
+             * @param {string} responseText custrecord_nchl_tran_response
+             * @param {string} rawDetail custrecord_nchl_tran_raw_detail
+             * @returns {string} SUCCESS, FAILED, IN-PROGRESS, UNKNOWN, NOT PAID (bill fetched only) or NOT POSTED
+             */
+            getstatuslabel: function (responseText, rawDetail) {
+                if (responseText) {
+                    return this.gettranstatus(responseText).status
+                }
+                return this.isbillnotpaid(rawDetail) ? 'NOT PAID' : 'NOT POSTED'
+            },
+            /**
              * A government bill that was only fetched (lodged) or chosen in the NPI Billers iframe (REVIEWED), never
              * confirmed: neither moves money
              * @param {string} rawDetail custrecord_nchl_tran_raw_detail

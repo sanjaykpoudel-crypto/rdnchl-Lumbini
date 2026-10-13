@@ -2,7 +2,23 @@
  * @NApiVersion 2.1
  * @NScriptType UserEventScript
  */
-define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtime'], function (record, config, rdmodu, message, url, runtime) {
+define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtime', 'N/search'], function (record, config, rdmodu, message, url, runtime, search) {
+        /**
+         * Keeps the stored Status (custrecord_lc_nchl_status, shown in the NCHL transaction list) in line with the
+         * saved NCHL response. Its own update comes back here as xedit and stops because nothing changed.
+         */
+        function updatestatus(recType, recId) {
+            const saved = search.lookupFields({
+                type: recType,
+                id: recId,
+                columns: ['custrecord_nchl_tran_response', 'custrecord_nchl_tran_raw_detail', 'custrecord_lc_nchl_status']
+            })
+            const status = rdmodu.getstatuslabel(saved.custrecord_nchl_tran_response, saved.custrecord_nchl_tran_raw_detail)
+            if (status !== saved.custrecord_lc_nchl_status) {
+                record.submitFields({type: recType, id: recId, values: {custrecord_lc_nchl_status: status}})
+            }
+        }
+
         return {
             beforeLoad: context => {
                 if (context.type === 'view') {
@@ -302,6 +318,9 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                             custrecord_nchl_tran_instruction: JSON.stringify(batchInstruction)
                         }
                     })
+                }
+                if (context.type !== 'delete') {
+                    updatestatus(context.newRecord.type, context.newRecord.id)
                 }
             }
         }
