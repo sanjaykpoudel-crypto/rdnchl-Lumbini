@@ -1201,9 +1201,10 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                     const tranDetail = resp.cipsTransactionDetail || resp.nchlIpsTransactionDetail || {}
                     const fieldErrors = (resp.responseResult.fieldErrors || []).map(fe => fe.message).filter(Boolean)
                     result.message = fieldErrors.length > 0 ? fieldErrors.join('<br/>') : resp.responseResult.responseDescription
-                    if (['999', 'ENTR'].includes(batchDetail.debitStatus)) {
+                    if (['999', 'E999', 'ENTR'].includes(batchDetail.debitStatus)) {
                         // no final answer on the debit yet, even when the response code says failed (NCHL answered
-                        // E999 FAILED with debitStatus 999): the money may still move, so it must not be paid again
+                        // E999 FAILED with debitStatus 999, and with debitStatus E999 while its status lookup showed
+                        // the debit still ENTR): the money may still move, so it must not be paid again
                         result.status = 'IN-PROGRESS'
                         result.message = (batchDetail.debitReasonDesc || 'Debit status ' + batchDetail.debitStatus) +
                             ' - not final, confirm with NCHL before paying again'
