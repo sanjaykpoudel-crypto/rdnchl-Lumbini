@@ -6,6 +6,38 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
     return {
         onRequest: context => {
             const form = serverWidget.createForm({title: 'NCHL Transaction Detail'})
+            // "Delete Failed Attempt" on the NCHL transaction: remove an attempt that debited nothing and go back to
+            // its record, which can then be corrected and paid again
+            if (context.request.parameters.deletetran === 'T') {
+                const recid = context.request.parameters.recid
+                try {
+                    if (!rdmod.canpay()) {
+                        throw new Error(rdmod.NOT_ALLOWED)
+                    }
+                    const deleted = rdmod.deletenchltran(recid)
+                    if (deleted.relRecordId) {
+                        // NetSuite opens the right transaction type from the generic transaction link
+                        redirect.redirect({url: '/app/accounting/transactions/transaction.nl?id=' + deleted.relRecordId})
+                        return
+                    }
+                    form.addPageInitMessage({
+                        message: message.create({type: message.Type.CONFIRMATION, title: 'Deleted', message: 'The NCHL attempt was deleted.'})
+                    })
+                } catch (e) {
+                    log.error('NCHL_DELETE_FAILED', {recid: recid, error: e.message})
+                    form.addPageInitMessage({
+                        message: message.create({type: message.Type.ERROR, title: 'Not deleted', message: e.message})
+                    })
+                    form.addField({
+                        id: 'custpage_back',
+                        label: 'Back',
+                        type: serverWidget.FieldType.INLINEHTML
+                    }).defaultValue = '<a href="' + url.resolveRecord({recordType: 'customrecord_nchl_transaction', recordId: recid}) +
+                        '">Back to NCHL transaction</a>'
+                }
+                context.response.writePage({pageObject: form})
+                return
+            }
             // "Resync with NCHL" on the NCHL transaction: refresh the status, then go back to the record,
             // whose view shows the new status banner and response
             if (context.request.parameters.resync === 'T') {

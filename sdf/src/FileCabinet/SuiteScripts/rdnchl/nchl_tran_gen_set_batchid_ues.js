@@ -9,15 +9,20 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
          */
         /**
          * NCHL transactions are the payment audit trail: only the payment scripts create and update them, nobody
-         * creates, edits or deletes them by hand, and nothing deletes them
+         * creates or edits them by hand, and only an attempt that debited nothing (failed, unpaid, unsent) is deleted
          */
         function guardaudittrail(context) {
             const types = context.UserEventType
             const byPerson = !rdmodu.isscripted()
+            if (context.type === types.DELETE && rdmodu.isdeletable(context.oldRecord.getValue('custrecord_nchl_tran_response'),
+                context.oldRecord.getValue('custrecord_nchl_tran_raw_detail'))) {
+                // a failed, unpaid or unsent attempt debited nothing (Delete Failed Attempt on the record)
+                return
+            }
             if (context.type === types.DELETE || ([types.CREATE, types.COPY, types.EDIT, types.XEDIT].includes(context.type) && byPerson)) {
                 // a plain message: NetSuite shows a thrown SuiteScriptError as raw JSON with its stack
                 throw 'NCHL transactions are created and updated only by the NCHL payment scripts and cannot be ' +
-                    'added, edited or deleted.'
+                    'added or edited. Only a failed, unpaid or unsent attempt can be deleted (Delete Failed Attempt).'
             }
         }
 
@@ -147,6 +152,20 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                             label: 'Resync with NCHL',
                             // NetSuite appends "()" to functionName, so pass a function rather than a statement
                             functionName: `(function () { window.location.href = '${resyncLink}' })`
+                        })
+                    }
+                    // nothing was debited: whoever may pay can delete the attempt, correct the record and pay again
+                    if (rdmodu.isdeletable(tranresp, context.newRecord.getValue('custrecord_nchl_tran_raw_detail')) && rdmodu.canpay()) {
+                        const deleteLink = url.resolveScript({
+                            scriptId: 'customscript_lc_get_nchl_tran_detail',
+                            deploymentId: 'customdeploy_lc_get_nchl_tran_detail',
+                            params: {recid: context.newRecord.id, deletetran: 'T'}
+                        })
+                        form.addButton({
+                            id: 'custpage_delete_nchl',
+                            label: 'Delete Failed Attempt',
+                            functionName: `(function () { if (window.confirm('Delete this NCHL attempt? Nothing was paid by it. ' +
+                                'You can then correct the record and pay again.')) { window.location.href = '${deleteLink}' } })`
                         })
                     }
                     form.addTab({id: 'custpage_nchl_response_tab', label: 'NCHL Response'})

@@ -1138,6 +1138,46 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                     // not every form has a removable Edit button
                 }
             },
+            // statuses of an NCHL transaction that debited nothing: it may be deleted to correct the record and pay again
+            DELETABLE_STATUSES: ['FAILED', 'NOT PAID', 'NOT POSTED'],
+            /**
+             * @param {string} responseText custrecord_nchl_tran_response
+             * @param {string} rawDetail custrecord_nchl_tran_raw_detail
+             * @returns {boolean} nothing was debited, so the attempt may be deleted
+             */
+            isdeletable: function (responseText, rawDetail) {
+                return this.DELETABLE_STATUSES.includes(this.getstatuslabel(responseText, rawDetail))
+            },
+            /**
+             * Deletes a failed, unpaid or never-sent NCHL transaction with its API log rows, so its record can be
+             * corrected and paid again. Anything that may have debited (SUCCESS, IN-PROGRESS, UNKNOWN) is refused.
+             * @param {string|number} nchltranid
+             * @returns {{relRecordId: string}} the record the attempt belonged to
+             */
+            deletenchltran: function (nchltranid) {
+                const tran = search.lookupFields({
+                    type: 'customrecord_nchl_transaction',
+                    id: nchltranid,
+                    columns: ['name', 'custrecord_nchl_tran_response', 'custrecord_nchl_tran_raw_detail', 'custrecord_nchl_tran_rel_record']
+                })
+                const status = this.getstatuslabel(tran.custrecord_nchl_tran_response, tran.custrecord_nchl_tran_raw_detail)
+                if (!this.DELETABLE_STATUSES.includes(status)) {
+                    throw error.create({
+                        name: 'NCHL_TRANSACTION_NOT_DELETABLE',
+                        message: `${tran.name} is ${status}; only failed, unpaid or unsent attempts can be deleted.`
+                    })
+                }
+                search.create({
+                    type: 'customrecord_lc_nchl_api_log',
+                    filters: [['custrecord_lc_nchllog_tran', 'anyof', nchltranid]]
+                }).run().each(result => {
+                    record.delete({type: 'customrecord_lc_nchl_api_log', id: result.id})
+                    return true
+                })
+                record.delete({type: 'customrecord_nchl_transaction', id: nchltranid})
+                log.audit('NCHL_TRANSACTION_DELETED', {nchltran: nchltranid, name: tran.name, status: status, user: runtime.getCurrentUser().id})
+                return {relRecordId: tran.custrecord_nchl_tran_rel_record.length ? tran.custrecord_nchl_tran_rel_record[0].value : ''}
+            },
             NOT_ALLOWED: 'You are not allowed to make NCHL payments. An Administrator can add you to Allowed Payers ' +
                 'in NCHL Payment Settings. Nothing was paid.',
             /**

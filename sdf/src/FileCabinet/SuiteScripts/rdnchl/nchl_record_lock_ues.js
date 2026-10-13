@@ -14,8 +14,9 @@ define(['./rdmodule'], function (rdmodu) {
         const types = context.UserEventType
         const recType = (context.newRecord || context.oldRecord).type
         if (recType === API_LOG) {
+            // the payment scripts write it, and delete it only together with a failed attempt (Delete Failed Attempt)
             const byPerson = !rdmodu.isscripted()
-            if (context.type === types.DELETE || ([types.CREATE, types.COPY, types.EDIT, types.XEDIT].includes(context.type) && byPerson)) {
+            if ([types.CREATE, types.COPY, types.EDIT, types.XEDIT, types.DELETE].includes(context.type) && byPerson) {
                 throw 'The NCHL API log is written only by the NCHL payment scripts and cannot be added, edited or deleted.'
             }
         } else if (recType === SETTINGS) {
