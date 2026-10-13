@@ -161,11 +161,11 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                             deploymentId: 'customdeploy_lc_get_nchl_tran_detail',
                             params: {recid: context.newRecord.id, deletetran: 'T'}
                         })
+                        // opens a confirmation page; the delete happens only when that page is submitted
                         form.addButton({
                             id: 'custpage_delete_nchl',
                             label: 'Delete Failed Attempt',
-                            functionName: `(function () { if (window.confirm('Delete this NCHL attempt? Nothing was paid by it. ' +
-                                'You can then correct the record and pay again.')) { window.location.href = '${deleteLink}' } })`
+                            functionName: `(function () { window.location.href = '${deleteLink}' })`
                         })
                     }
                     form.addTab({id: 'custpage_nchl_response_tab', label: 'NCHL Response'})

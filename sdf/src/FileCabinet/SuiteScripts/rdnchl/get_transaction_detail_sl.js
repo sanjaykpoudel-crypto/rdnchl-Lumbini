@@ -2,17 +2,54 @@
  * @NApiVersion 2.1
  * @NScriptType Suitelet
  */
-define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redirect', 'N/url'], function (serverWidget, record, rdmod, message, redirect, url) {
+define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redirect', 'N/url', 'N/search'], function (serverWidget, record, rdmod, message, redirect, url, search) {
     return {
         onRequest: context => {
             const form = serverWidget.createForm({title: 'NCHL Transaction Detail'})
-            // "Delete Failed Attempt" on the NCHL transaction: remove an attempt that debited nothing and go back to
-            // its record, which can then be corrected and paid again
-            if (context.request.parameters.deletetran === 'T') {
-                const recid = context.request.parameters.recid
+            // "Delete Failed Attempt" on the NCHL transaction: a confirmation page (GET), then the delete (POST) of an
+            // attempt that debited nothing, back to its record, which can then be corrected and paid again
+            if (context.request.parameters.deletetran === 'T' || context.request.parameters.custpage_deletetran) {
+                const recid = context.request.parameters.recid || context.request.parameters.custpage_deletetran
                 try {
                     if (!rdmod.canpay()) {
                         throw new Error(rdmod.NOT_ALLOWED)
+                    }
+                    if (context.request.method === 'GET') {
+                        const tran = search.lookupFields({
+                            type: 'customrecord_nchl_transaction',
+                            id: recid,
+                            columns: ['name', 'custrecord_nchl_tran_response', 'custrecord_nchl_tran_raw_detail', 'custrecord_nchl_tran_rel_record']
+                        })
+                        const status = rdmod.getstatuslabel(tran.custrecord_nchl_tran_response, tran.custrecord_nchl_tran_raw_detail)
+                        if (!rdmod.DELETABLE_STATUSES.includes(status)) {
+                            throw new Error(`${tran.name} is ${status}; only failed, unpaid or unsent attempts can be deleted.`)
+                        }
+                        const confirmForm = serverWidget.createForm({title: 'Delete Failed NCHL Attempt'})
+                        confirmForm.addPageInitMessage({
+                            message: message.create({
+                                type: message.Type.WARNING,
+                                title: 'Delete ' + tran.name + '?',
+                                message: `Status ${status}: nothing was debited by this attempt. Deleting it removes the attempt and its ` +
+                                    'API log. You can then correct the record and pay again.'
+                            })
+                        })
+                        const show = (id, label, value) => {
+                            confirmForm.addField({id: id, label: label, type: serverWidget.FieldType.TEXT})
+                                .updateDisplayType({displayType: serverWidget.FieldDisplayType.INLINE}).defaultValue = value
+                        }
+                        show('custpage_name', 'NCHL Transaction', tran.name)
+                        show('custpage_status', 'Status', status)
+                        show('custpage_record', 'Record', tran.custrecord_nchl_tran_rel_record.length ? tran.custrecord_nchl_tran_rel_record[0].text : '')
+                        confirmForm.addField({id: 'custpage_deletetran', label: 'id', type: serverWidget.FieldType.TEXT})
+                            .updateDisplayType({displayType: serverWidget.FieldDisplayType.HIDDEN}).defaultValue = recid
+                        confirmForm.addSubmitButton({label: 'Delete Attempt'})
+                        confirmForm.addButton({
+                            id: 'custpage_cancel',
+                            label: 'Cancel',
+                            functionName: `(function () { window.location.href = '${url.resolveRecord({recordType: 'customrecord_nchl_transaction', recordId: recid})}' })`
+                        })
+                        context.response.writePage({pageObject: confirmForm})
+                        return
                     }
                     const deleted = rdmod.deletenchltran(recid)
                     if (deleted.relRecordId) {
