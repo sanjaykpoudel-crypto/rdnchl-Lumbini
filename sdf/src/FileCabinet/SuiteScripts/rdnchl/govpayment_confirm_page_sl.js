@@ -2,16 +2,15 @@
  * @NApiVersion 2.1
  * @NScriptType Suitelet
  */
-// Pays a government bill (IRD, SSF, CIT) from an approved journal through NCHL, in one of two ways the user can switch
-// between on the page:
-// - API: the user types the bill reference, Fetch Bill lodges it (NCHL and the biller check it, nothing is
+// Pays a government bill (IRD, SSF, CIT) from an approved journal through NCHL, in one of two ways:
+// - API (default): the user types the bill reference, Fetch Bill lodges it (NCHL and the biller check it, nothing is
 //   paid) and Make Payment confirms it
-// - NPI Billers iframe (spec v2, the default once NCHL's participant code and keys are set in govbillers.IFRAME): the
-//   user finds and confirms the bill in NCHL's page, NCHL hands it back (encrypted npiObject) and Make Payment confirms
-//   it with our bank as debtor (/api/npibiller/confirmbillerpay.do)
+// - NPI Billers iframe (spec v2), once NCHL's participant code and keys are set in govbillers.IFRAME: the user finds and
+//   confirms the bill in NCHL's page, NCHL hands it back (encrypted npiObject) and Make Payment confirms it with our
+//   bank as debtor (/api/npibiller/confirmbillerpay.do)
 // The journal's credit line is the paying bank; its amount must equal the bill.
-define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect', 'N/cache', 'N/url', 'N/runtime', './rdmodule', './govbillers', './npibillersjose'],
-    function (serverWidget, record, search, message, redirect, cache, url, runtime, rdmod, gov, jose) {
+define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect', 'N/cache', './rdmodule', './govbillers', './npibillersjose'],
+    function (serverWidget, record, search, message, redirect, cache, rdmod, gov, jose) {
         const TITLE = 'Government Payment'
         const BILLER_FIELD = 'custbody_lc_nchl_gov_biller'
         // NCHL real-time (CIPS) limit for a payment to another bank
@@ -41,25 +40,6 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
 
         function escapehtml(text) {
             return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-        }
-
-        /**
-         * Button that reopens this page for the same journal in the other mode
-         * @param {string} mode 'api' (type the bill reference) or 'iframe' (NCHL's billers page)
-         */
-        function addmodeswitch(form, journal, mode) {
-            const script = runtime.getCurrentScript()
-            const pageUrl = url.resolveScript({
-                scriptId: script.id,
-                deploymentId: script.deploymentId,
-                params: {recordid: journal.id, mode: mode}
-            })
-            form.addButton({
-                id: 'custpage_switch_mode',
-                label: mode === 'api' ? 'Type Bill Reference Instead' : 'Use NCHL Billers Page Instead',
-                // NetSuite appends "()" to functionName, so pass a function rather than a statement
-                functionName: `(function () { window.location.href = ${JSON.stringify(pageUrl)} })`
-            })
         }
 
         function sessioncache() {
@@ -176,9 +156,6 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
             showmessage(form, message.Type.INFORMATION, 'Step 1 of 2',
                 'Enter the bill reference and click Fetch Bill. NCHL checks the bill with ' + payment.billerKey + ' and shows it here; nothing is paid yet.')
             form.addSubmitButton({label: 'Fetch Bill'})
-            if (jose.getsetupgaps().length === 0) {
-                addmodeswitch(form, journal, 'iframe')
-            }
             return form
         }
 
@@ -393,7 +370,6 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
                     </script>`
             showmessage(form, message.Type.INFORMATION, 'Step 1 of 2',
                 `Choose ${payment.billerKey} in the NCHL page below, enter the bill and confirm it there. Nothing is paid until you click Make Payment on the next step.`)
-            addmodeswitch(form, journal, 'api')
             return form
         }
 
@@ -613,10 +589,8 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
                     const params = context.request.parameters
                     const journal = record.load({type: record.Type.JOURNAL_ENTRY, id: params.custpage_journal || params.recordid})
                     if (context.request.method === 'GET') {
-                        // NCHL's billers page once its participant code and keys are set up, unless the user chose to
-                        // type the bill reference (mode=api)
-                        const useIframe = params.mode !== 'api' && jose.getsetupgaps().length === 0
-                        form = useIframe ? writebillerpage(context, journal) : writebillform(context, journal)
+                        // the iframe is used once NCHL's participant code and keys are set up
+                        form = jose.getsetupgaps().length === 0 ? writebillerpage(context, journal) : writebillform(context, journal)
                     } else if (params.custpage_step === 'confirm') {
                         form = confirmbill(context, journal)
                     } else if (params.custpage_step === 'review') {
