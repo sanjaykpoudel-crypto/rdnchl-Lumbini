@@ -1090,6 +1090,13 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                             ? resp.fieldErrors.map(fielderr => fielderr.message).join('<br/>')
                             : resp.responseDescription
                     }
+                } else if (resp.hasOwnProperty('responseCode') && resp.hasOwnProperty('responseMessage')) {
+                    // NCHL refused the request itself (e.g. E001 INVALID IP ADDRESS): nothing was processed.
+                    // 999 is a timeout, whose result is not known.
+                    result.message = resp.responseMessage
+                    if (resp.responseCode !== '000' && resp.responseCode !== '999') {
+                        result.status = 'FAILED'
+                    }
                 }
                 return result
             },
