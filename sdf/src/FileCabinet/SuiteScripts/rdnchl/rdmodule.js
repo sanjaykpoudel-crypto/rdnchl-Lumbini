@@ -975,8 +975,35 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                 const detail = JSON.parse(response.body)
                 const lines = (isRealTime ? detail.cipsTransactionDetailList : detail.nchlIpsTransactionDetailList) || []
                 const debitFailed = !!detail.debitStatus && detail.debitStatus !== '000'
+                const savedStatus = this.gettranstatus(tran.custrecord_nchl_tran_response).status
+                // NCHL returns the batch whenever it has it, even unfinished (debit ENTR), and an empty list when it
+                // has no batch with this id at all: then the payment never reached NCHL and nothing was debited.
+                // Trusted only an hour after the payment, so a batch NCHL is still creating is not taken for a
+                // missing one. Seen on the CIPS lookup only; IPS keeps the old rule.
+                const noBatch = Array.isArray(detail) ? detail.length === 0 : !detail.batchId
+                if (isRealTime && noBatch && savedStatus !== 'SUCCESS' && this.gettranagehours(nchltranid) >= 1) {
+                    let original = tran.custrecord_nchl_tran_response
+                    try {
+                        original = JSON.parse(original || '{}').originalResponse || original
+                    } catch (e) {
+                        // not JSON (a connection error): keep it as saved
+                    }
+                    const noBatchMessage = 'NCHL has no record of batch ' + batch.batchId + ', so nothing was debited.'
+                    const failedText = JSON.stringify({
+                        cipsBatchResponse: {responseCode: 'NOBATCH', responseMessage: noBatchMessage, batchId: batch.batchId},
+                        cipsTxnResponseList: [],
+                        statusCheck: {checkedAt: new Date().toISOString(), nchlAnswer: detail},
+                        originalResponse: original
+                    })
+                    record.submitFields({
+                        type: 'customrecord_nchl_transaction',
+                        id: nchltranid,
+                        values: {custrecord_nchl_tran_response: failedText}
+                    })
+                    log.audit('NCHL_STATUS_REFRESHED', {nchltran: nchltranid, batchId: batch.batchId, status: 'FAILED', reason: 'no batch at NCHL'})
+                    return {status: 'FAILED', message: noBatchMessage, detail: detail}
+                }
                 if (!debitFailed && lines.length === 0) {
-                    const savedStatus = this.gettranstatus(tran.custrecord_nchl_tran_response).status
                     return {
                         status: savedStatus,
                         message: savedStatus === 'FAILED'
@@ -1041,6 +1068,23 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                 }
                 log.audit('NCHL_STATUS_REFRESHED', {nchltran: nchltranid, batchId: batch.batchId, status: tranStatus.status})
                 return {status: tranStatus.status, message: tranStatus.message, detail: detail}
+            },
+            /**
+             * @param {string|number} nchltranid
+             * @returns {number} hours since the NCHL transaction was created (worked out by NetSuite, so no date
+             * format or time zone is involved)
+             */
+            gettranagehours: function (nchltranid) {
+                let hours = 0
+                search.create({
+                    type: 'customrecord_nchl_transaction',
+                    filters: [['internalid', 'anyof', nchltranid]],
+                    columns: [search.createColumn({name: 'formulanumeric', formula: '({now} - {created}) * 24'})]
+                }).run().each(result => {
+                    hours = parseFloat(result.getValue(result.columns[0])) || 0
+                    return false
+                })
+                return hours
             },
             /**
              * Classifies a saved NCHL response (custrecord_nchl_tran_response)
