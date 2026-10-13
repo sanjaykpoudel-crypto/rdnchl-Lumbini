@@ -1,8 +1,8 @@
 /**
  * @NApiVersion 2.1
  */
-define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 'N/crypto/certificate', 'N/error', './govbillers'],
-    function (http, encode, npiconf, cache, search, record, certificate, error, govbillers) {
+define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 'N/crypto/certificate', 'N/error', './govbillers'],
+    function (http, https, file, encode, npiconf, cache, search, record, certificate, error, govbillers) {
         const TOKEN_CACHE = 'LC_NCHL_TOKENS'
         const LIST_CACHE = 'LC_NCHL_LISTS'
         const REFRESH_TOKEN_MS = 12 * 60 * 60 * 1000
@@ -10,21 +10,46 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
         const TOKEN_MARGIN_MS = 30 * 1000
 
         /**
+         * NCHL connection: the default one (npiconfig, through the relay) for payments, or the NPI Billers one
+         * (govbillers.NPI, NCHL's separate UAT login) for paying bills confirmed in the iframe
+         * @param {string} [name] 'BILLER' for the NPI Billers connection
+         * @returns {{HOST, USERNAME, PASSWORD, USERID, USERPASS, CERTIFICATE_ID, cachePrefix: string}}
+         */
+        function connection(name) {
+            if (name !== 'BILLER') {
+                return Object.assign({cachePrefix: ''}, npiconf)
+            }
+            let secrets
+            try {
+                secrets = JSON.parse(file.load({id: govbillers.NPI.CREDENTIALS_FILE}).getContents())
+            } catch (e) {
+                throw error.create({name: 'NPI_BILLER_NOT_SET_UP', message: `NPI Billers passwords not found in ${govbillers.NPI.CREDENTIALS_FILE}`})
+            }
+            return Object.assign({cachePrefix: 'biller_'}, govbillers.NPI, {PASSWORD: secrets.PASSWORD, USERPASS: secrets.USERPASS})
+        }
+
+        // the relay is plain HTTP; NCHL's own hosts are HTTPS, which N/http does not call
+        function transport(url) {
+            return /^https:/i.test(url) ? https : http
+        }
+
+        /**
          * POST to NCHL's /oauth/token with the client's Basic credentials
          * @param {Object} body form fields
+         * @param {Object} conn connection()
          * @returns {Object} NCHL's answer
          * @throws NPI_TOKEN_HTTP_<status> when NCHL answers with an error status
          */
-        function requesttoken(body) {
+        function requesttoken(body, conn) {
             // Basic auth requires standard base64; the URL-safe alphabet changes '+' and '/'
             const b64basic = encode.convert({
-                string: npiconf.USERNAME + ':' + npiconf.PASSWORD,
+                string: conn.USERNAME + ':' + conn.PASSWORD,
                 inputEncoding: encode.Encoding.UTF_8,
                 outputEncoding: encode.Encoding.BASE_64
             })
-            const response = http.request({
+            const response = transport(conn.HOST).request({
                 method: http.Method.POST,
-                url: npiconf.HOST + '/oauth/token',
+                url: conn.HOST + '/oauth/token',
                 headers: {
                     'Authorization': 'Basic ' + b64basic,
                     'Content-Type': 'application/x-www-form-urlencoded'
@@ -79,41 +104,44 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
              * NCHL access token, kept in a server cache shared by all scripts. NCHL's rules: the password grant only
              * yields a refresh token (its access token must not be used); a refresh token lasts 12 hours and buys
              * access tokens that last 300 seconds; a refresh rejected with HTTP 400 means logging in again.
+             * @param {string} [connName] 'BILLER' for the NPI Billers connection
              * @returns {string} JSON {access_token}, the shape callers already parse
              */
-            generatetoken: function () {
+            generatetoken: function (connName) {
                 try {
+                    const conn = connection(connName)
+                    const key = name => conn.cachePrefix + name
                     const store = cache.getCache({name: TOKEN_CACHE, scope: cache.Scope.PROTECTED})
                     const now = Date.now()
-                    const access = readcached(store, 'access')
+                    const access = readcached(store, key('access'))
                     if (access && access.expiresAt - TOKEN_MARGIN_MS > now) {
                         return JSON.stringify({access_token: access.token})
                     }
-                    let refresh = readcached(store, 'refresh')
+                    let refresh = readcached(store, key('refresh'))
                     if (!refresh || refresh.expiresAt - TOKEN_MARGIN_MS <= now) {
-                        refresh = this.loginnchl(store)
+                        refresh = this.loginnchl(store, conn)
                         if (!refresh) {
-                            return JSON.stringify({access_token: readcached(store, 'access').token})
+                            return JSON.stringify({access_token: readcached(store, key('access')).token})
                         }
                     }
                     let granted
                     try {
-                        granted = requesttoken({grant_type: 'refresh_token', refresh_token: refresh.token})
+                        granted = requesttoken({grant_type: 'refresh_token', refresh_token: refresh.token}, conn)
                     } catch (e) {
                         if (e.name !== 'NPI_TOKEN_HTTP_400') {
                             throw e
                         }
                         // refresh token expired or revoked before its 12 hours: log in again
-                        refresh = this.loginnchl(store)
+                        refresh = this.loginnchl(store, conn)
                         if (!refresh) {
-                            return JSON.stringify({access_token: readcached(store, 'access').token})
+                            return JSON.stringify({access_token: readcached(store, key('access')).token})
                         }
-                        granted = requesttoken({grant_type: 'refresh_token', refresh_token: refresh.token})
+                        granted = requesttoken({grant_type: 'refresh_token', refresh_token: refresh.token}, conn)
                     }
                     if (granted.refresh_token && granted.refresh_token !== refresh.token) {
-                        savecached(store, 'refresh', granted.refresh_token, REFRESH_TOKEN_MS)
+                        savecached(store, key('refresh'), granted.refresh_token, REFRESH_TOKEN_MS)
                     }
-                    savecached(store, 'access', granted.access_token, (granted.expires_in || 300) * 1000)
+                    savecached(store, key('access'), granted.access_token, (granted.expires_in || 300) * 1000)
                     return JSON.stringify({access_token: granted.access_token})
                 } catch (e) {
                     log.error({
@@ -126,21 +154,22 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
             /**
              * Password grant: keeps only the refresh token
              */
-            loginnchl: function (store) {
-                const login = requesttoken({grant_type: 'password', username: npiconf.USERID, password: npiconf.USERPASS})
+            loginnchl: function (store, conn) {
+                const login = requesttoken({grant_type: 'password', username: conn.USERID, password: conn.USERPASS}, conn)
                 if (login.refresh_token) {
-                    return savecached(store, 'refresh', login.refresh_token, REFRESH_TOKEN_MS)
+                    return savecached(store, conn.cachePrefix + 'refresh', login.refresh_token, REFRESH_TOKEN_MS)
                 }
                 // not what NCHL documents; keep payments working with the login's access token and make it visible
                 log.error('NPI_NO_REFRESH_TOKEN', {fields: Object.keys(login)})
-                savecached(store, 'access', login.access_token, (login.expires_in || 300) * 1000)
+                savecached(store, conn.cachePrefix + 'access', login.access_token, (login.expires_in || 300) * 1000)
                 return null
             },
             /**
              * Drops the cached access token, e.g. after NCHL answered 401 with it
+             * @param {string} [connName] 'BILLER' for the NPI Billers connection
              */
-            forgetaccesstoken: function () {
-                cache.getCache({name: TOKEN_CACHE, scope: cache.Scope.PROTECTED}).remove({key: 'access'})
+            forgetaccesstoken: function (connName) {
+                cache.getCache({name: TOKEN_CACHE, scope: cache.Scope.PROTECTED}).remove({key: connection(connName).cachePrefix + 'access'})
             },
             /**
              * NCHL bank list for CIPS or IPS, kept 12 hours
@@ -431,13 +460,14 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
              * @param {string} option.path NCHL path after npiconfig.HOST
              * @param {Object} option.body request body
              * @param {string} [option.token] access token to reuse instead of requesting a new one
+             * @param {string} [option.conn] 'BILLER' for the NPI Billers connection
              * @returns {http.ClientResponse}
              */
             callnchl: function (option) {
                 const response = this.sendnchl(option)
                 if (response.code === 401 && !option.token) {
                     // the cached access token was no longer accepted: get a fresh one and send once more
-                    this.forgetaccesstoken()
+                    this.forgetaccesstoken(option.conn)
                     return this.sendnchl(option)
                 }
                 return response
@@ -447,15 +477,15 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
              */
             sendnchl: function (option) {
                 const request = {
-                    url: npiconf.HOST + option.path,
+                    url: connection(option.conn).HOST + option.path,
                     headers: {'content-type': 'application/json', 'accept': '*/*'},
                     body: JSON.stringify(option.body)
                 }
                 const started = Date.now()
                 let response = null, failure = null
                 try {
-                    const token = option.token || JSON.parse(this.generatetoken()).access_token
-                    response = http.request({
+                    const token = option.token || JSON.parse(this.generatetoken(option.conn)).access_token
+                    response = transport(request.url).request({
                         method: http.Method.POST,
                         url: request.url,
                         headers: Object.assign({'authorization': 'Bearer ' + token}, request.headers),
@@ -702,12 +732,14 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
              * @param option
              * @param {string} option.batchstr
              * @param {string} option.transtr
+             * @param {string} [option.conn] 'BILLER' for the NPI Billers connection (its user and certificate)
              * @returns {string} token
              */
             sigtoken: function (option) {
-                const tokenString = option.batchstr + ',' + option.transtr + ',' + npiconf.USERID
+                const conn = option.conn === 'BILLER' ? govbillers.NPI : npiconf
+                const tokenString = option.batchstr + ',' + option.transtr + ',' + conn.USERID
                 const signer = certificate.createSigner({
-                    certId: npiconf.CERTIFICATE_ID,
+                    certId: conn.CERTIFICATE_ID,
                     algorithm: certificate.HashAlg.SHA256
                 })
                 signer.update(tokenString)
@@ -809,7 +841,7 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
             },
             /**
              * Pays a bill confirmed in the NPI Billers iframe (spec v2, 4.7): the npiObject's batch with our bank as
-             * debtor and its transaction, signed with the NPI certificate
+             * debtor and its transaction, signed with the NPI certificate; sent with NCHL's NPI Billers login
              * @param {string|number} nchltranid NCHL transaction holding the batch and instruction
              * @returns {Object} NCHL's response
              */
@@ -821,12 +853,13 @@ define(['N/http', 'N/encode', './npiconfig', 'N/cache', 'N/search', 'N/record', 
                 const transtr = `${instruction.id},${instruction.instructionId},${instruction.endToEndId},${instruction.appId},${instruction.refId},${instruction.amount}`
                 const response = this.callnchl({
                     nchltranid: nchltranid,
+                    conn: 'BILLER',
                     action: 'BILLER CONFIRM',
                     path: '/api/npibiller/confirmbillerpay.do',
                     body: {
                         cipsBatchDetail: batch,
                         cipsTransactionDetail: instruction,
-                        token: this.sigtoken({batchstr: batchstr, transtr: transtr})
+                        token: this.sigtoken({batchstr: batchstr, transtr: transtr, conn: 'BILLER'})
                     }
                 })
                 return JSON.parse(response.body)

@@ -54,6 +54,16 @@ define([], function () {
             PRIVATE_KEY_FILE: '/SuiteScripts/rdnchl-keys/npibillersign_private_pem.txt',
             NCHL_PUBLIC_KEY_FILE: '/SuiteScripts/rdnchl-keys/npibillerenc_pem.txt'
         },
+        // NPI connection for paying bills confirmed in the iframe (confirmbillerpay.do): NCHL's separate UAT login, not
+        // npiconfig. The two passwords are in CREDENTIALS_FILE ({"PASSWORD": basic auth, "USERPASS": user}) in the
+        // git-ignored rdnchl-keys folder. CERTIFICATE_ID is NCHL's NPI.pfx uploaded under Setup > Company > Certificates.
+        NPI: {
+            HOST: 'https://devnpi.connectips.com',
+            USERNAME: 'lumbiniceramics',
+            USERID: 'LUMBINICERAMICS@999',
+            CERTIFICATE_ID: 'custcertificate_lc_npi_biller',
+            CREDENTIALS_FILE: '/SuiteScripts/rdnchl-keys/npibiller_credentials_json.txt'
+        },
         // Government revenue: the category purpose NCHL's biller documentation uses
         PURPOSE: 'GREV',
         // credit statuses NCHL's confirm bill pay documentation counts as paid
