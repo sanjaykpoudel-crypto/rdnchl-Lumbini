@@ -19,12 +19,18 @@ define(['N/url', './rdmodule'], function (url, rdmodu) {
 
     return {
         beforeLoad: context => {
+            // paid through NCHL: no editing (throws on edit)
+            rdmodu.guardpaidrecord(context)
             const journal = context.newRecord
-            if (context.type !== 'view' || journal.getValue('approvalstatus') !== '2' || !rdmodu.canpay()) {
+            if (context.type !== 'view') {
                 return
             }
-            // an NCHL transaction that succeeded, is in progress or is unknown blocks a second payment
-            if (rdmodu.getactivenchltran(journal.id)) {
+            // an NCHL transaction that succeeded, is in progress or is unknown blocks a second payment and editing
+            if (rdmodu.getpaidlock(journal)) {
+                rdmodu.hideeditbutton(context.form)
+                return
+            }
+            if (journal.getValue('approvalstatus') !== '2' || !rdmodu.canpay()) {
                 return
             }
             let page
@@ -41,6 +47,8 @@ define(['N/url', './rdmodule'], function (url, rdmodu) {
                 label: 'Pay Online',
                 functionName: `window.open('${pageUrl}')`
             })
-        }
+        },
+        // paid through NCHL: no editing or deleting
+        beforeSubmit: context => rdmodu.guardpaidrecord(context)
     }
 })

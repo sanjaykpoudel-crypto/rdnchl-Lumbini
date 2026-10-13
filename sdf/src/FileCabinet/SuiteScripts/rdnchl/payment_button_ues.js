@@ -33,9 +33,12 @@ define(['N/url', './rdmodule', 'N/record', 'N/runtime'], function (url, rdmodu, 
                     }
                 }
             }
+            // paid through NCHL: no editing (throws on edit)
+            rdmodu.guardpaidrecord(context)
             if (context.type === 'view') {
-                if (context.newRecord.getValue('approvalstatus') === '2' && !context.newRecord.getValue('custbody_rdnchl_paid_online')
-                    && !rdmodu.getactivenchltran(context.newRecord.id) && rdmodu.canpay()) {
+                if (rdmodu.getpaidlock(context.newRecord)) {
+                    rdmodu.hideeditbutton(form)
+                } else if (context.newRecord.getValue('approvalstatus') === '2' && rdmodu.canpay()) {
                     const targetUrl = url.resolveScript({
                         scriptId: 'customscript_lc_payment_confirm_sl',
                         deploymentId: 'customdeploy_lc_payment_confirm_sl',
@@ -51,6 +54,8 @@ define(['N/url', './rdmodule', 'N/record', 'N/runtime'], function (url, rdmodu, 
                     })
                 }
             }
-        }
+        },
+        // paid through NCHL: no editing or deleting
+        beforeSubmit: context => rdmodu.guardpaidrecord(context)
     }
 })

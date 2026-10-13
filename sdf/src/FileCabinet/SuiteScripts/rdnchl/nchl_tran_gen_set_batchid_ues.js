@@ -2,11 +2,28 @@
  * @NApiVersion 2.1
  * @NScriptType UserEventScript
  */
-define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtime', 'N/search'], function (record, config, rdmodu, message, url, runtime, search) {
+define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtime', 'N/search', 'N/error'], function (record, config, rdmodu, message, url, runtime, search, error) {
         /**
          * Keeps the stored Status (custrecord_lc_nchl_status, shown in the NCHL transaction list) in line with the
          * saved NCHL response. Its own update comes back here as xedit and stops because nothing changed.
          */
+        /**
+         * NCHL transactions are the payment audit trail: only the payment scripts create and update them, nobody
+         * creates, edits or deletes them by hand, and nothing deletes them
+         */
+        function guardaudittrail(context) {
+            const types = context.UserEventType
+            const byPerson = !rdmodu.isscripted()
+            if (context.type === types.DELETE || ([types.CREATE, types.COPY, types.EDIT, types.XEDIT].includes(context.type) && byPerson)) {
+                throw error.create({
+                    name: 'NCHL_TRANSACTION_LOCKED',
+                    message: 'NCHL transactions are created and updated only by the NCHL payment scripts and cannot be ' +
+                        'added, edited or deleted.',
+                    notifyOff: true
+                })
+            }
+        }
+
         function updatestatus(recType, recId) {
             const saved = search.lookupFields({
                 type: recType,
@@ -21,8 +38,10 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
 
         return {
             beforeLoad: context => {
+                guardaudittrail(context)
                 if (context.type === 'view') {
                     const form = context.form
+                    rdmodu.hideeditbutton(form)
                     const isRealTime = context.newRecord.getValue('custrecord_is_real_time')
                     const batch = JSON.parse(context.newRecord.getValue('custrecord_nchl_tran_batch') || '{}')
                     /*const instruction = JSON.parse(context.newRecord.getValue('custrecord_nchl_tran_instruction'))
@@ -220,6 +239,7 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                 }
             }
             ,
+            beforeSubmit: context => guardaudittrail(context),
             afterSubmit: context => {
                 if (context.type === 'create' || context.type === 'edit') {
                     /*const companyInformation = config.load({

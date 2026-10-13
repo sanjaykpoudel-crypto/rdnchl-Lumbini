@@ -5,12 +5,15 @@
 define(['N/url', './rdmodule'], function (url, rdmodu) {
     return {
         beforeLoad: context => {
+            // paid through NCHL: no editing (throws on edit)
+            rdmodu.guardpaidrecord(context)
             if (context.type === 'view') {
                 const tranStat = context.newRecord.getValue('transtatus')
                 // custbody_rdnchl_paid_online is not applied to contra vouchers, so an earlier NCHL
                 // transaction (successful, in progress or unknown) is what hides the button
-                const paidOnline = context.newRecord.getValue('custbody_rdnchl_paid_online')
-                if (tranStat === 'B' && !paidOnline && !rdmodu.getactivenchltran(context.newRecord.id) && rdmodu.canpay()) {
+                if (rdmodu.getpaidlock(context.newRecord)) {
+                    rdmodu.hideeditbutton(context.form)
+                } else if (tranStat === 'B' && rdmodu.canpay()) {
                     const pageUrl = url.resolveScript({
                         scriptId: 'customscript_lc_contra_pmt_confirm',
                         deploymentId: 'customdeploy_lc_contra_pmt_confirm',
@@ -26,6 +29,8 @@ define(['N/url', './rdmodule'], function (url, rdmodu) {
                     })
                 }
             }
-        }
+        },
+        // paid through NCHL: no editing or deleting
+        beforeSubmit: context => rdmodu.guardpaidrecord(context)
     }
 })

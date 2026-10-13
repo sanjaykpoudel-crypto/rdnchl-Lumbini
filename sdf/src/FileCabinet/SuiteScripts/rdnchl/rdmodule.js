@@ -1069,6 +1069,74 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                 log.audit('NCHL_STATUS_REFRESHED', {nchltran: nchltranid, batchId: batch.batchId, status: tranStatus.status})
                 return {status: tranStatus.status, message: tranStatus.message, detail: detail}
             },
+            /**
+             * The logged-in employee has the Administrator role. Read from the employee record, not user.role: some
+             * deployments run as Administrator, which could report that role for every user.
+             * @returns {boolean}
+             */
+            isadmin: function () {
+                const user = runtime.getCurrentUser()
+                if (!(Number(user.id) > 0)) {
+                    return false
+                }
+                return search.create({
+                    type: search.Type.EMPLOYEE,
+                    filters: [['internalid', 'anyof', user.id], 'AND', ['role', 'anyof', '3']]
+                }).runPaged().count > 0
+            },
+            /**
+             * Our own payment code updates records from these contexts (status, Paid Online); anything else is a person
+             * (the UI, CSV import, web services)
+             * @returns {boolean}
+             */
+            isscripted: function () {
+                const types = runtime.ContextType
+                return [types.SUITELET, types.SCHEDULED, types.USER_EVENT, types.MAP_REDUCE].includes(runtime.executionContext)
+            },
+            /**
+             * User event guard for a vendor payment, prepayment, journal or contra paid through NCHL (an NCHL transaction
+             * that succeeded, is in progress or unknown, or Paid Online ticked): nobody may edit or delete it, a mistake
+             * is corrected with a reversing entry. Our payment scripts may still update it. Throws when not allowed.
+             * @param {Object} context beforeLoad or beforeSubmit context
+             */
+            guardpaidrecord: function (context) {
+                const types = context.UserEventType
+                if (![types.EDIT, types.XEDIT, types.DELETE].includes(context.type)) {
+                    return
+                }
+                if (context.type !== types.DELETE && this.isscripted()) {
+                    return
+                }
+                const lock = this.getpaidlock(context.oldRecord || context.newRecord)
+                if (lock) {
+                    throw error.create({name: 'NCHL_PAID_LOCKED', message: lock, notifyOff: true})
+                }
+            },
+            /**
+             * @param {record.Record} rec vendor payment, prepayment, journal or contra
+             * @returns {string|null} why the record is locked (paid through NCHL), or null
+             */
+            getpaidlock: function (rec) {
+                if (!rec || !rec.id) {
+                    return null
+                }
+                const active = this.getactivenchltran(rec.id)
+                if (!active && !rec.getValue('custbody_rdnchl_paid_online')) {
+                    return null
+                }
+                return 'This record was paid through NCHL' + (active ? ` (${active.name}, ${active.status})` : '') +
+                    ' and cannot be edited or deleted. Correct it with a reversing entry.'
+            },
+            /**
+             * Hides the standard Edit button of a locked record's view page (the guards still block the edit)
+             */
+            hideeditbutton: function (form) {
+                try {
+                    form.removeButton({id: 'edit'})
+                } catch (e) {
+                    // not every form has a removable Edit button
+                }
+            },
             NOT_ALLOWED: 'You are not allowed to make NCHL payments. An Administrator can add you to Allowed Payers ' +
                 'in NCHL Payment Settings. Nothing was paid.',
             /**
@@ -1079,7 +1147,7 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
              */
             canpay: function () {
                 const user = runtime.getCurrentUser()
-                if (user.roleId === 'administrator' || String(user.role) === '3') {
+                if (this.isadmin()) {
                     return true
                 }
                 let allowed = false
