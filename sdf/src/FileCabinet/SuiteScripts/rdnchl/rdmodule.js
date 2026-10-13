@@ -929,7 +929,8 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                     action: 'STATUS CHECK',
                     path: uri,
                     body: {batchId: option.batchid},
-                    token: option.token
+                    token: option.token,
+                    conn: option.conn
                 })
                 log.debug(logTitle, response)
                 return response
@@ -939,7 +940,8 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
              * on the NCHL transaction record and marks the related record paid once every credit is settled.
              * Only a failed debit counts as FAILED; any other unsettled credit stays IN-PROGRESS so a
              * second payment remains blocked until someone checks with the bank.
-             * Bill payments (IRD / DOC) have their own lodge/confirm result and are not refreshed here.
+             * Bill payments (IRD / DOC) have their own lodge/confirm result and are not refreshed here; bills paid
+             * through the NPI Billers iframe are, with NCHL's batch id and the NPI Billers login.
              * @param {string|number} nchltranid
              * @param {string} [token] NPI access token to reuse
              * @returns {{status: string, message: string, detail: Object}|null} null when not refreshable
@@ -949,16 +951,20 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                     type: 'customrecord_nchl_transaction',
                     id: nchltranid,
                     columns: ['custrecord_nchl_tran_mode', 'custrecord_nchl_tran_batch', 'custrecord_nchl_tran_response',
-                        'custrecord_nchl_tran_rel_record', 'custrecord_rd_ns_record_type']
+                        'custrecord_nchl_tran_rel_record', 'custrecord_rd_ns_record_type', 'custrecord_nchl_tran_raw_detail']
                 })
                 const mode = tran.custrecord_nchl_tran_mode.length ? tran.custrecord_nchl_tran_mode[0].value : ''
-                const isBillPayment = /"responseResult"/.test(tran.custrecord_nchl_tran_response || '')
+                const isIframeBill = /"npiobject"/.test(tran.custrecord_nchl_tran_raw_detail || '')
+                const isBillPayment = /"responseResult"/.test(tran.custrecord_nchl_tran_response || '') && !isIframeBill
                 if ((mode !== '1' && mode !== '2') || isBillPayment) {
                     return null
                 }
                 const isRealTime = mode === '1'
                 const batch = JSON.parse(tran.custrecord_nchl_tran_batch || '{}')
-                const detailOption = {batchid: batch.batchId, token: token, nchltranid: nchltranid}
+                // the iframe bill's batch was posted with the NPI Billers login, so it is looked up with it (own token)
+                const detailOption = isIframeBill
+                    ? {batchid: batch.batchId, conn: 'BILLER', nchltranid: nchltranid}
+                    : {batchid: batch.batchId, token: token, nchltranid: nchltranid}
                 const response = isRealTime ? this.getcipstrandetail(detailOption) : this.getipstrandetail(detailOption)
                 if (response.code !== 200) {
                     throw error.create({
@@ -994,8 +1000,10 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                         debitStatus: detail.debitStatus
                     },
                     cipsTxnResponseList: lines.map(line => {
-                        // NCHL reports progress with ISO 20022 codes (SENT, ACTC, ...); 000 / ACSC = settlement completed
-                        const settled = line.creditStatus === '000' || line.creditStatus === 'ACSC'
+                        // NCHL reports progress with ISO 20022 codes (SENT, ACTC, ...); 000 / ACSC = settlement completed,
+                        // a bill also counts as paid with the biller's own credit statuses (DEFER, ...)
+                        const settled = line.creditStatus === '000' || line.creditStatus === 'ACSC' ||
+                            (isIframeBill && govbillers.PAID_CREDIT_STATUSES.includes(line.creditStatus))
                         const reason = line.reasonDesc || line.reasonCode
                         return {
                             responseCode: debitFailed ? detail.debitStatus : (settled ? '000' : 'ENTR'),

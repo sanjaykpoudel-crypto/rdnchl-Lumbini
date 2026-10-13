@@ -110,11 +110,11 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                     }
                     // Resync only asks NCHL for the current status (rdmodule.refreshtranstatus); it never resends the
                     // payment, because a timed-out or failed-looking request may still have debited the account.
-                    // Biller payments (IRD / DOC) have no status API, so they are left out.
+                    // Biller payments (IRD / DOC) have no status API, so they are left out. Bills paid through the NPI
+                    // Billers iframe (raw detail holds the npiObject) carry NCHL's own batch id, which can be looked up.
                     const mode = context.newRecord.getValue('custrecord_nchl_tran_mode')
-                    // bills paid through the NPI Billers iframe (raw detail holds the npiObject) have no status API either
-                    const isBillerResponse = /"responseResult"/.test(tranresp || '') ||
-                        /"npiobject"/.test(context.newRecord.getValue('custrecord_nchl_tran_raw_detail') || '')
+                    const isBillerResponse = /"responseResult"/.test(tranresp || '') &&
+                        !/"npiobject"/.test(context.newRecord.getValue('custrecord_nchl_tran_raw_detail') || '')
                     const billNotPaid = !tranresp && rdmodu.isbillnotpaid(context.newRecord.getValue('custrecord_nchl_tran_raw_detail'))
                     if ((mode === '1' || mode === '2') && !isBillerResponse && !billNotPaid && status !== 'SUCCESS') {
                         const resyncLink = url.resolveScript({
