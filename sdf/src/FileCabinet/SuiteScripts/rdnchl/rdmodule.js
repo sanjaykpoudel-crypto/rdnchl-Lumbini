@@ -1022,22 +1022,29 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                 const normalized = {
                     cipsBatchResponse: {
                         responseCode: debitFailed ? detail.debitStatus : '000',
-                        responseMessage: detail.debitReasonDesc,
+                        responseMessage: detail.debitReasonDesc || (debitFailed && isRealTime
+                            ? 'NCHL debit status ' + detail.debitStatus + ' - debit rejected, nothing was debited' : null),
                         batchId: detail.batchId,
                         debitStatus: detail.debitStatus
                     },
                     cipsTxnResponseList: lines.map(line => {
-                        // NCHL reports progress with ISO 20022 codes (SENT, ACTC, ...); 000 / ACSC = settlement completed,
-                        // a bill also counts as paid with the biller's own credit statuses (DEFER, ...)
-                        const settled = line.creditStatus === '000' || line.creditStatus === 'ACSC' ||
-                            (isIframeBill && govbillers.PAID_CREDIT_STATUSES.includes(line.creditStatus))
+                        // NCHL's rule for real-time payments and bills: debit status 000 = debited, any other = debit
+                        // rejected; once debited, credit status 000, 999, empty or DEFER = success. Non-real-time (IPS)
+                        // debits wait for NCHL's settlement session, so an open IPS debit stays in progress.
+                        // ISO 20022 codes (SENT, ACTC, ...) mean on the way; ACSC = settlement completed.
+                        const debitRejected = debitFailed && isRealTime
+                        const settled = !debitFailed && (line.creditStatus === '000' || line.creditStatus === 'ACSC' ||
+                            (isRealTime && (!line.creditStatus || govbillers.PAID_CREDIT_STATUSES.includes(line.creditStatus))))
                         const reason = line.reasonDesc || line.reasonCode
-                        // no credit status yet: the debit itself is still open at NCHL (ENTR = entered, 999 = timed out)
-                        const pendingText = line.creditStatus ? 'NCHL credit status ' + line.creditStatus
-                            : 'NCHL debit status ' + (detail.debitStatus || 'not set') + ' - not final, confirm with NCHL before paying again'
+                        const pendingText = debitRejected
+                            ? 'NCHL debit status ' + detail.debitStatus + ' - debit rejected, nothing was debited'
+                            : line.creditStatus ? 'NCHL credit status ' + line.creditStatus
+                                : 'NCHL debit status ' + (detail.debitStatus || 'not set') + ' - not final, confirm with NCHL before paying again'
                         return {
-                            responseCode: debitFailed ? detail.debitStatus : (settled ? '000' : 'ENTR'),
-                            creditStatus: settled ? '000' : line.creditStatus,
+                            // DEBIT_REJECTED is no pending code, so gettranstatus reads the batch as FAILED
+                            responseCode: debitRejected ? 'DEBIT_REJECTED' : debitFailed ? detail.debitStatus : (settled ? '000' : 'ENTR'),
+                            // a rejected debit has no credit to wait for
+                            creditStatus: debitRejected ? null : settled ? '000' : line.creditStatus,
                             nchlCreditStatus: line.creditStatus,
                             instructionId: line.instructionId,
                             responseMessage: settled ? 'SETTLED' : pendingText +
@@ -1241,18 +1248,14 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                     const tranDetail = resp.cipsTransactionDetail || resp.nchlIpsTransactionDetail || {}
                     const fieldErrors = (resp.responseResult.fieldErrors || []).map(fe => fe.message).filter(Boolean)
                     result.message = fieldErrors.length > 0 ? fieldErrors.join('<br/>') : resp.responseResult.responseDescription
-                    if (['999', 'E999', 'ENTR'].includes(batchDetail.debitStatus)) {
-                        // no final answer on the debit yet, even when the response code says failed (NCHL answered
-                        // E999 FAILED with debitStatus 999, and with debitStatus E999 while its status lookup showed
-                        // the debit still ENTR): the money may still move, so it must not be paid again
-                        result.status = 'IN-PROGRESS'
+                    // NCHL's rule: debit status 000 is a successful debit, any other debit status a rejected (failed)
+                    // debit; once debited, credit status 000, 999, empty or DEFER is a success
+                    if (batchDetail.debitStatus && batchDetail.debitStatus !== '000') {
+                        result.status = 'FAILED'
                         result.message = (batchDetail.debitReasonDesc || 'Debit status ' + batchDetail.debitStatus) +
-                            ' - not final, confirm with NCHL before paying again'
-                    } else if (resp.responseResult.responseCode !== '000') {
+                            ' - debit rejected, nothing was debited'
+                    } else if (batchDetail.debitStatus !== '000' && resp.responseResult.responseCode !== '000') {
                         result.status = 'FAILED'
-                    } else if (batchDetail.debitStatus && batchDetail.debitStatus !== '000') {
-                        result.status = 'FAILED'
-                        result.message = batchDetail.debitReasonDesc || 'Debit status ' + batchDetail.debitStatus
                     } else if (!tranDetail.creditStatus || govbillers.PAID_CREDIT_STATUSES.includes(tranDetail.creditStatus)) {
                         result.status = 'SUCCESS'
                     } else {
