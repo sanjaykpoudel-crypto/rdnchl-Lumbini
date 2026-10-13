@@ -1005,12 +1005,15 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                         const settled = line.creditStatus === '000' || line.creditStatus === 'ACSC' ||
                             (isIframeBill && govbillers.PAID_CREDIT_STATUSES.includes(line.creditStatus))
                         const reason = line.reasonDesc || line.reasonCode
+                        // no credit status yet: the debit itself is still open at NCHL (ENTR = entered, 999 = timed out)
+                        const pendingText = line.creditStatus ? 'NCHL credit status ' + line.creditStatus
+                            : 'NCHL debit status ' + (detail.debitStatus || 'not set') + ' - not final, confirm with NCHL before paying again'
                         return {
                             responseCode: debitFailed ? detail.debitStatus : (settled ? '000' : 'ENTR'),
                             creditStatus: settled ? '000' : line.creditStatus,
                             nchlCreditStatus: line.creditStatus,
                             instructionId: line.instructionId,
-                            responseMessage: settled ? 'SETTLED' : 'NCHL credit status ' + line.creditStatus +
+                            responseMessage: settled ? 'SETTLED' : pendingText +
                                 (reason ? ': ' + reason : '') + (line.reversalStatus ? ' (reversal ' + line.reversalStatus + ')' : '')
                         }
                     }),
