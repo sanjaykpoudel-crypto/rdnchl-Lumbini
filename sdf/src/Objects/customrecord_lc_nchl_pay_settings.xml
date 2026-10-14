@@ -10,7 +10,7 @@
   <allowquickadd>F</allowquickadd>
   <allowquicksearch>F</allowquicksearch>
   <allowuiaccess>T</allowuiaccess>
-  <description>Who may pay through NCHL (Pay Online buttons and payment pages). Administrators always may; anyone else must be in Allowed Payers. With no record or an empty list, only Administrators can pay.</description>
+  <description>Who may pay through NCHL (Pay Online buttons and payment pages). Only the employees in Allowed Payers may, Administrators included; with no record or an empty list nobody can pay. Only Administrators can change the list.</description>
   <enablekeywords>F</enablekeywords>
   <enablenumbering>F</enablenumbering>
   <enableoptimisticlocking>T</enableoptimisticlocking>

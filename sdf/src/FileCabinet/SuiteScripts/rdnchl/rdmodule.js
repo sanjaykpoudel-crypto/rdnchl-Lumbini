@@ -1205,15 +1205,17 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
             NOT_ALLOWED: 'You are not allowed to make NCHL payments. An Administrator can add you to Allowed Payers ' +
                 'in NCHL Payment Settings. Nothing was paid.',
             /**
-             * Who may pay through NCHL: Administrators always, anyone else only when listed in Allowed Payers of an
-             * active NCHL Payment Settings record (no record or an empty list: Administrators only). Checked by every
-             * Pay Online button and again by every payment page, so a page opened by its link cannot pay either.
+             * Who may pay through NCHL: only the employees listed in Allowed Payers of an active NCHL Payment Settings
+             * record, Administrators included (every login may be an Administrator, as in the sandbox, so the role
+             * cannot grant it). No record or an empty list: nobody. Administrators keep the right to edit the list.
+             * Checked by every Pay Online button and again by every payment page, so a page opened by its link cannot
+             * pay either.
              * @returns {boolean}
              */
             canpay: function () {
                 const user = runtime.getCurrentUser()
-                if (this.isadmin()) {
-                    return true
+                if (!(Number(user.id) > 0)) {
+                    return false
                 }
                 let allowed = false
                 search.create({
