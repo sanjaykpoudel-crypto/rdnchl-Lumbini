@@ -9,8 +9,8 @@
 //   confirms the bill in NCHL's page, NCHL hands it back (encrypted npiObject) and Make Payment confirms it with our
 //   bank as debtor (/api/npibiller/confirmbillerpay.do)
 // The journal's credit line is the paying bank; its amount must equal the bill.
-define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect', 'N/cache', './rdmodule', './govbillers', './npibillersjose'],
-    function (serverWidget, record, search, message, redirect, cache, rdmod, gov, jose) {
+define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect', 'N/cache', 'N/url', 'N/format', 'N/runtime', './rdmodule', './govbillers', './npibillersjose'],
+    function (serverWidget, record, search, message, redirect, cache, url, format, runtime, rdmod, gov, jose) {
         const TITLE = 'Government Payment'
         const BILLER_FIELD = 'custbody_lc_nchl_gov_biller'
         // NCHL real-time (CIPS) limit for a payment to another bank
@@ -322,6 +322,61 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
         }
 
         /**
+         * The journal beside NCHL's page: what to pay, from which account, and the journal lines, so the bill can be
+         * checked against them without leaving the page
+         * @returns {string} HTML
+         */
+        function recordpanel(journal, payment) {
+            const money = amount => format.format({value: round(amount), type: format.Type.CURRENCY})
+            const row = (label, value) => value === '' || value === null || value === undefined ? '' :
+                `<tr><th>${escapehtml(label)}</th><td>${escapehtml(value)}</td></tr>`
+            const journalUrl = url.resolveRecord({recordType: journal.type, recordId: journal.id})
+            const debtor = payment.debtorBank
+            // only OneWorld accounts have subsidiaries (otherwise the field just holds 1)
+            const subsidiary = runtime.isFeatureInEffect({feature: 'SUBSIDIARIES'}) ? journal.getText('subsidiary') : ''
+            const lines = []
+            for (let i = 0; i < journal.getLineCount({sublistId: 'line'}); i++) {
+                const text = fieldId => journal.getSublistText({sublistId: 'line', fieldId: fieldId, line: i}) || ''
+                const debit = parseFloat(journal.getSublistValue({sublistId: 'line', fieldId: 'debit', line: i})) || 0
+                const credit = parseFloat(journal.getSublistValue({sublistId: 'line', fieldId: 'credit', line: i})) || 0
+                lines.push(`<tr><td>${escapehtml(text('account'))}${text('entity') ? '<br><span class="lc-sub">' + escapehtml(text('entity')) + '</span>' : ''}` +
+                    `${text('memo') ? '<br><span class="lc-sub">' + escapehtml(text('memo')) + '</span>' : ''}</td>` +
+                    `<td class="lc-num">${debit ? money(debit) : ''}</td><td class="lc-num">${credit ? money(credit) : ''}</td></tr>`)
+            }
+            return `<div class="lc-card">
+                    <h3>Pay</h3>
+                    <div class="lc-amount">NPR ${escapehtml(money(payment.amount))}</div>
+                    <table class="lc-kv">
+                    ${row('Government Payment', payment.biller.label)}
+                    ${row('Payment Type', payment.nrt ? 'Non-Real-Time (NRT)' : 'Real-Time')}
+                    </table>
+                    <p class="lc-hint">In NCHL's page choose ${escapehtml(payment.billerKey)}; the bill amount must be the amount above.</p>
+                </div>
+                <div class="lc-card">
+                    <h3>Journal</h3>
+                    <table class="lc-kv">
+                    <tr><th>Journal</th><td><a href="${escapehtml(journalUrl)}" target="_blank">${escapehtml(journal.getValue('tranid') || journal.id)}</a></td></tr>
+                    ${row('Date', journal.getText('trandate'))}
+                    ${row('Subsidiary', subsidiary)}
+                    ${row('Memo', journal.getValue('memo'))}
+                    </table>
+                    <table class="lc-lines">
+                    <tr><th>Account</th><th class="lc-num">Debit</th><th class="lc-num">Credit</th></tr>
+                    ${lines.join('')}
+                    </table>
+                </div>
+                <div class="lc-card">
+                    <h3>Paid From</h3>
+                    <table class="lc-kv">
+                    ${row('Bank', debtor ? JSON.parse(debtor.custrecord_rdnchl_bank_prop).text : '')}
+                    ${row('Branch', debtor ? JSON.parse(debtor.custrecord_rdnchl_bank_branch_prop).text : '')}
+                    ${row('Account Name', debtor ? debtor.custrecord_rdnchl_account_name : '')}
+                    ${row('Account Number', debtor ? debtor.custrecord_rdnchl_account_number : '')}
+                    </table>
+                </div>`
+        }
+
+        /**
          * Step 1: NCHL's biller page; its submit_form_payload message posts the encrypted bill back to this page
          */
         function writebillerpage(context, journal) {
@@ -332,8 +387,8 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
                 return form
             }
             const payment = getgovpayment(journal, true)
-            adddetail(form, journal, payment)
             if (payment.problems.length > 0) {
+                adddetail(form, journal, payment)
                 showmessage(form, message.Type.ERROR, 'Cannot pay this journal', payment.problems.join('<br>'))
                 return form
             }
@@ -342,11 +397,33 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
             addhidden(form, 'custpage_step', 'review')
             addhidden(form, 'custpage_session', session.sessionId)
             addhidden(form, 'custpage_npiobject', '')
-            // below the field groups and as wide as the window: NetSuite keeps the cell narrow
+            // the journal on the left, NCHL's page on the right (stacked on a narrow window); outside NetSuite's field
+            // cells, which would keep it narrow
             const billers = form.addField({id: 'custpage_billers', label: 'NCHL Billers', type: serverWidget.FieldType.INLINEHTML})
             billers.updateLayoutType({layoutType: serverWidget.FieldLayoutType.OUTSIDEBELOW})
-            billers.defaultValue = `<iframe id="npibillers" src="${escapehtml(session.url)}"
-                    style="width:calc(100vw - 48px);height:760px;border:1px solid #d0d7de;margin-top:12px"></iframe>
+            billers.defaultValue = `<style>
+                    .lc-gov{display:flex;gap:16px;align-items:flex-start;width:calc(100vw - 48px);margin-top:12px;font-size:13px}
+                    .lc-side{flex:0 0 340px;position:sticky;top:8px}
+                    .lc-main{flex:1 1 auto;min-width:0}
+                    .lc-main iframe{width:100%;height:780px;border:1px solid #d0d7de;display:block}
+                    .lc-card{border:1px solid #d0d7de;border-radius:4px;background:#f8f9fa;padding:10px 12px;margin-bottom:12px}
+                    .lc-card h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:#555;letter-spacing:.04em}
+                    .lc-amount{font-size:22px;font-weight:bold;margin-bottom:6px}
+                    .lc-card table{width:100%;border-collapse:collapse}
+                    .lc-kv th{text-align:left;font-weight:normal;color:#666;padding:3px 8px 3px 0;vertical-align:top;white-space:nowrap}
+                    .lc-kv td{padding:3px 0;word-break:break-word}
+                    .lc-lines{margin-top:8px}
+                    .lc-lines th{text-align:left;color:#666;font-weight:normal;border-bottom:1px solid #d0d7de;padding:3px 4px}
+                    .lc-lines td{border-bottom:1px solid #e6e8eb;padding:4px;vertical-align:top}
+                    .lc-lines .lc-num{text-align:right;white-space:nowrap}
+                    .lc-sub{color:#666;font-size:12px}
+                    .lc-hint{margin:8px 0 0;color:#555}
+                    @media (max-width:1100px){.lc-gov{flex-direction:column}.lc-side{position:static;flex-basis:auto;width:100%}.lc-main{width:100%}}
+                    </style>
+                    <div class="lc-gov">
+                    <div class="lc-side">${recordpanel(journal, payment)}</div>
+                    <div class="lc-main"><iframe id="npibillers" src="${escapehtml(session.url)}"></iframe></div>
+                    </div>
                     <script>
                     (function () {
                         var origin = ${JSON.stringify(gov.IFRAME.ORIGIN)}, sessionId = ${JSON.stringify(session.sessionId)}
