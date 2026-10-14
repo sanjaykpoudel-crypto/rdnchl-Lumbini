@@ -92,6 +92,8 @@ define([], function () {
         PURPOSE: 'GREV',
         // credit statuses NCHL's confirm bill pay documentation counts as paid
         PAID_CREDIT_STATUSES: ['000', 'DEFER', '999', 'ACSC'],
+        // final rejected credit (NCHL-IPS: GEN, SENT, ACTC, ACSP are on the way, ACSC accepted, RJCT rejected)
+        REJECTED_CREDIT_STATUSES: ['RJCT'],
         /**
          * The journal's NCHL Government Payment list values are named "IRD ...", "SSF ...", "CIT ..."
          * @param {string} text the selected value's text

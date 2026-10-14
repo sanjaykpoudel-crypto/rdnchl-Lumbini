@@ -1275,7 +1275,10 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                             ' - debit rejected, nothing was debited'
                     } else if (batchDetail.debitStatus === '000' && tranDetail.creditStatus) {
                         // debit and credit both answered: their reasons, not responseDescription, explain the status
-                        if (govbillers.PAID_CREDIT_STATUSES.includes(tranDetail.creditStatus)) {
+                        if (govbillers.REJECTED_CREDIT_STATUSES.includes(tranDetail.creditStatus)) {
+                            result.status = 'FAILED'
+                            result.message = 'Credit rejected (RJCT) by NCHL-IPS - the debit is returned by NCHL; check the paying account before paying again'
+                        } else if (govbillers.PAID_CREDIT_STATUSES.includes(tranDetail.creditStatus)) {
                             result.status = 'SUCCESS'
                             result.message = 'Debit ' + (batchDetail.debitReasonDesc || '000') + ', credit ' +
                                 (tranDetail.reasonDesc || tranDetail.creditStatus) + ' (' + tranDetail.creditStatus + ')'
@@ -1316,8 +1319,13 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                         result.message = text && /debit rejected/.test(text) ? text
                             : 'Debit status ' + debitStatus + ' - debit rejected, nothing was debited' + (text && text !== 'SUCCESS' ? ': ' + text : '')
                     } else if (debitStatus === '000' || batchResponse.responseCode === '000') {
+                        const creditRejected = line => govbillers.REJECTED_CREDIT_STATUSES.includes(line.nchlCreditStatus || line.creditStatus)
                         if (lines.length > 0 && lines.every(creditPaid)) {
                             result.status = 'SUCCESS'
+                        } else if (lines.length > 0 && lines.every(creditRejected)) {
+                            // NCHL-IPS rejected every credit (final): NCHL returns the debit
+                            result.status = 'FAILED'
+                            result.message = 'Credit rejected (RJCT) by NCHL-IPS - the debit is returned by NCHL; check the paying account before paying again'
                         } else {
                             // debited, credit not confirmed yet (ENTR, SENT, ACTC, ...): the money left the account,
                             // so it is never FAILED (which would allow paying again)
