@@ -26,6 +26,33 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
             }
         }
 
+        /**
+         * The record's own Pay Online page, for a new payment after a failed attempt; null when the record cannot be
+         * paid now (another attempt succeeded, is in progress or unknown)
+         * @param {record.Record} nchlTran
+         * @returns {string|null}
+         */
+        function getpayagainurl(nchlTran) {
+            const relId = nchlTran.getValue('custrecord_nchl_tran_rel_record')
+            const relType = String(nchlTran.getValue('custrecord_rd_ns_record_type') || '').toLowerCase()
+            if (!relId || rdmodu.getactivenchltran(relId)) {
+                return null
+            }
+            let page = null
+            if (relType === 'vendorpayment' || relType === 'vendorprepayment') {
+                page = {scriptId: 'customscript_lc_payment_confirm_sl', deploymentId: 'customdeploy_lc_payment_confirm_sl'}
+            } else if (relType.indexOf('customtransaction_contra') === 0) {
+                page = {scriptId: 'customscript_lc_contra_pmt_confirm', deploymentId: 'customdeploy_lc_contra_pmt_confirm'}
+            } else if (relType === 'journalentry') {
+                // the same choice as the journal's Pay Online: government bill or salary payment
+                const journal = search.lookupFields({type: search.Type.JOURNAL_ENTRY, id: relId, columns: ['custbody_lc_nchl_gov_biller']})
+                page = journal.custbody_lc_nchl_gov_biller && journal.custbody_lc_nchl_gov_biller.length
+                    ? {scriptId: 'customscript_lc_gov_pay', deploymentId: 'customdeploy_lc_gov_pay'}
+                    : {scriptId: 'customscript_lc_salary_jrnl_pay', deploymentId: 'customdeploy_lc_salary_jrnl_pay'}
+            }
+            return page ? url.resolveScript(Object.assign(page, {params: {recordtype: relType, recordid: relId}})) : null
+        }
+
         function updatestatus(recType, recId) {
             const saved = search.lookupFields({
                 type: recType,
@@ -139,7 +166,9 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                     const isBillerResponse = /"responseResult"/.test(tranresp || '') &&
                         !/"npiobject"/.test(context.newRecord.getValue('custrecord_nchl_tran_raw_detail') || '')
                     const billNotPaid = !tranresp && rdmodu.isbillnotpaid(context.newRecord.getValue('custrecord_nchl_tran_raw_detail'))
-                    if ((mode === '1' || mode === '2') && !isBillerResponse && !billNotPaid && statusCode !== 'SUCCESS') {
+                    // a status check helps only while NCHL's answer can still change: not after SUCCESS, and not after FAILED
+                    // (by NCHL's rule a rejected debit is final; paying again is Pay Again, a new payment)
+                    if ((mode === '1' || mode === '2') && !isBillerResponse && !billNotPaid && !['SUCCESS', 'FAILED'].includes(statusCode)) {
                         const resyncLink = url.resolveScript({
                             scriptId: 'customscript_lc_get_nchl_tran_detail',
                             deploymentId: 'customdeploy_lc_get_nchl_tran_detail',
@@ -157,8 +186,17 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                             functionName: `(function () { window.location.href = '${resyncLink}' })`
                         })
                     }
-                    // nothing was debited: whoever may pay can delete the attempt, correct the record and pay again
+                    // nothing was debited: whoever may pay can pay again (a new payment with a new batch, never the old
+                    // one resent) or delete the attempt
                     if (rdmodu.isdeletable(tranresp, context.newRecord.getValue('custrecord_nchl_tran_raw_detail')) && rdmodu.canpay()) {
+                        const payAgainUrl = getpayagainurl(context.newRecord)
+                        if (payAgainUrl) {
+                            form.addButton({
+                                id: 'custpage_pay_again_nchl',
+                                label: 'Pay Again',
+                                functionName: `(function () { window.location.href = '${payAgainUrl}' })`
+                            })
+                        }
                         const deleteLink = url.resolveScript({
                             scriptId: 'customscript_lc_get_nchl_tran_detail',
                             deploymentId: 'customdeploy_lc_get_nchl_tran_detail',
