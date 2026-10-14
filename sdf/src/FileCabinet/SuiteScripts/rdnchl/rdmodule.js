@@ -97,6 +97,40 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
             return list
         }
 
+        function parsebody(body) {
+            try {
+                return JSON.parse(body)
+            } catch (e) {
+                return null
+            }
+        }
+
+        /**
+         * What the API log keeps of a balance or statement answer: the codes and messages, never the amounts
+         */
+        function nchlsummary(body, pick) {
+            const data = parsebody(body)
+            return data ? JSON.stringify(pick(data)) : String(body || '').slice(0, 500)
+        }
+
+        /**
+         * NCHL's reason for a refused balance or statement request, e.g. "E007 You are not authorized for this action"
+         */
+        function nchlerror(response, data) {
+            if (data) {
+                const code = data.statementResponseCode || data.responseCode || ''
+                const text = data.statementResponseMessage || data.responseMessage || data.responseStatus || data.message || data.error_description || ''
+                if (code || text) {
+                    return `${code} ${text}`.trim()
+                }
+            }
+            // NCHL's gateway answers errors with an HTML page: keep its title only
+            const body = String(response.body || '')
+            const title = /<title>([^<]*)<\/title>/i.exec(body)
+            const text = title ? title[1] : body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+            return `NCHL answered HTTP ${response.code}` + (text ? ': ' + text.slice(0, 200) : '')
+        }
+
         return {
             // NCHL categoryPurpose codes offered on the payment pages
             categorypurposes: {CUST: 'Customer Payment', SUPP: 'Supplier Payment'},
@@ -503,7 +537,8 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
              * Never throws: a log that cannot be saved must not stop a payment
              */
             writeapilog: function (option, request, response, failure, duration) {
-                if (!option.nchltranid) {
+                // calls outside a payment (balance, statement) are logged only when they say what to keep
+                if (!option.nchltranid && !option.logsummary) {
                     return
                 }
                 // CLOBTEXT holds up to 1,000,000 characters
@@ -518,7 +553,7 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                 }
                 try {
                     const values = {
-                        custrecord_lc_nchllog_tran: option.nchltranid,
+                        custrecord_lc_nchllog_tran: option.nchltranid || '',
                         custrecord_lc_nchllog_action: option.action,
                         custrecord_lc_nchllog_method: 'POST',
                         custrecord_lc_nchllog_url: request.url,
@@ -529,7 +564,8 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                     }
                     if (response) {
                         values.custrecord_lc_nchllog_http_code = response.code
-                        values.custrecord_lc_nchllog_response = clob(response.body)
+                        // balances and statement lines stay out of the log, which more people can read
+                        values.custrecord_lc_nchllog_response = clob(option.logsummary ? option.logsummary(response.body) : response.body)
                         values.custrecord_lc_nchllog_resp_headers = clob(response.headers)
                     }
                     if (failure) {
@@ -952,6 +988,60 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                 })
                 log.debug(logTitle, response)
                 return response
+            },
+            /**
+             * Available and ledger balance of a company account (NPI spec 12, balance enquiry). Only accounts NCHL
+             * whitelisted, with the bank's debit authority, can be asked.
+             * @param {{bankId: string, branchId: string, accountNumber: string}} account
+             * @returns {{ok: boolean, message: string, available?: number, ledger?: number, currency?: string}}
+             */
+            getaccountbalance: function (account) {
+                const response = this.callnchl({
+                    action: 'BALANCE ENQUIRY',
+                    path: '/api/account/balance',
+                    body: {bankId: account.bankId, branchId: account.branchId, accountId: account.accountNumber},
+                    logsummary: body => nchlsummary(body, data => ({responseCode: data.responseCode, responseMessage: data.responseMessage}))
+                })
+                const data = parsebody(response.body)
+                if (response.code !== 200 || !data || data.responseCode !== '000') {
+                    return {ok: false, message: nchlerror(response, data)}
+                }
+                // CR is a credit (positive) balance; DR an overdrawn one
+                const signed = (amount, type) => (String(type).toUpperCase() === 'DR' ? -1 : 1) * (parseFloat(amount) || 0)
+                return {
+                    ok: true,
+                    message: '',
+                    available: signed(data.availBal, data.abPartTranType),
+                    ledger: signed(data.totalBal, data.lbPartTranType),
+                    currency: data.currency || 'NPR'
+                }
+            },
+            /**
+             * The bank's statement of a company account (NPI spec 13, fetch account statement). Each bank sets how
+             * many days one request may cover, and must have the service switched on.
+             * @param {{bankCode: string, accountNumber: string, fromDate: string, toDate: string}} option dates yyyy-MM-dd
+             * @returns {{ok: boolean, message: string, data?: Object}} data: NCHL's statementResponseData
+             */
+            getaccountstatement: function (option) {
+                const response = this.callnchl({
+                    action: 'ACCOUNT STATEMENT',
+                    path: '/api/v1/ac-stmt',
+                    body: {bankCode: option.bankCode, fromDate: option.fromDate, toDate: option.toDate, accountNumber: option.accountNumber},
+                    logsummary: body => nchlsummary(body, data => ({
+                        statementResponseCode: data.statementResponseCode || data.responseCode,
+                        statementResponseStatus: data.statementResponseStatus || data.responseStatus,
+                        statementResponseMessage: data.statementResponseMessage || data.responseMessage,
+                        lines: data.statementResponseData && Array.isArray(data.statementResponseData.statements)
+                            ? data.statementResponseData.statements.length : undefined
+                    }))
+                })
+                const data = parsebody(response.body)
+                const ok = response.code === 200 && data && data.statementResponseData &&
+                    (data.statementResponseCode === '000' || String(data.statementResponseStatus).toUpperCase() === 'SUCCESS')
+                if (!ok) {
+                    return {ok: false, message: nchlerror(response, data)}
+                }
+                return {ok: true, message: data.statementResponseMessage || '', data: data.statementResponseData}
             },
             /**
              * Asks NCHL for the settlement status of a CIPS (real time) or IPS (non real time) transfer, saves it

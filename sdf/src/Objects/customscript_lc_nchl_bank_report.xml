@@ -1,0 +1,32 @@
+<suitelet scriptid="customscript_lc_nchl_bank_report">
+  <description>Company bank balances (NCHL balance enquiry) next to NetSuite, and the bank statement of an account (NCHL fetch account statement) with a CSV for bank data import. Allowed Payers only.</description>
+  <isinactive>F</isinactive>
+  <name>LC NCHL Bank Balances and Statement</name>
+  <notifyadmins>F</notifyadmins>
+  <notifyemails></notifyemails>
+  <notifyowner>T</notifyowner>
+  <notifyuser>F</notifyuser>
+  <scriptfile>[/SuiteScripts/rdnchl/bank_report_sl.js]</scriptfile>
+  <scriptdeployments>
+    <scriptdeployment scriptid="customdeploy_lc_nchl_bank_report">
+      <allemployees>F</allemployees>
+      <allpartners>F</allpartners>
+      <allroles>T</allroles>
+      <audslctrole></audslctrole>
+      <eventtype></eventtype>
+      <isdeployed>T</isdeployed>
+      <isonline>F</isonline>
+      <loglevel>DEBUG</loglevel>
+      <runasrole></runasrole>
+      <status>RELEASED</status>
+      <title>NCHL Bank Balances</title>
+      <links>
+        <link>
+          <linkcategory>BASICTRANSACTIONSBANK</linkcategory>
+          <linklabel>NCHL Bank Balances</linklabel>
+          <linktasktype>SCRIPT</linktasktype>
+        </link>
+      </links>
+    </scriptdeployment>
+  </scriptdeployments>
+</suitelet>
