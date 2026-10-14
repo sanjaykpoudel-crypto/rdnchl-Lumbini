@@ -75,7 +75,7 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
                 context.response.writePage({pageObject: form})
                 return
             }
-            // "Resync with NCHL" on the NCHL transaction: refresh the status, then go back to the record,
+            // "Check NCHL Status" on the NCHL transaction: refresh the status, then go back to the record,
             // whose view shows the new status banner and response
             if (context.request.parameters.resync === 'T') {
                 const rectype = context.request.parameters.rectype
@@ -97,7 +97,7 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/ui/message', 'N/redire
                     form.addPageInitMessage({
                         message: message.create({
                             type: message.Type.ERROR,
-                            title: 'Resync failed',
+                            title: 'NCHL status check failed',
                             message: e.message
                         })
                     })

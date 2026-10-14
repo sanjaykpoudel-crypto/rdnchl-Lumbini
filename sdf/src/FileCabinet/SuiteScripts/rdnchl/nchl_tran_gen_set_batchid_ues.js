@@ -151,7 +151,8 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                         })
                         form.addButton({
                             id: 'custpage_resync_nchl',
-                            label: 'Resync with NCHL',
+                            // a status query only: it never sends the payment again
+                            label: 'Check NCHL Status',
                             // NetSuite appends "()" to functionName, so pass a function rather than a statement
                             functionName: `(function () { window.location.href = '${resyncLink}' })`
                         })
@@ -228,7 +229,7 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                             message: message.create({
                                 type: resyncStatus === 'SUCCESS' ? message.Type.CONFIRMATION
                                     : resyncStatus === 'FAILED' ? message.Type.ERROR : message.Type.INFORMATION,
-                                title: 'Resynced with NCHL: ' + escapeHtml(resyncStatus),
+                                title: 'NCHL status: ' + escapeHtml(resyncStatus),
                                 message: escapeHtml(context.request.parameters.nchlresyncmsg || '')
                             })
                         })
