@@ -322,14 +322,14 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
         }
 
         /**
-         * The journal beside NCHL's page: what to pay, from which account, and the journal lines, so the bill can be
-         * checked against them without leaving the page
+         * The journal beside NCHL's page, kept short: what to pay, from which account, and the journal lines, so the
+         * bill can be checked against them without leaving the page
          * @returns {string} HTML
          */
         function recordpanel(journal, payment) {
             const money = amount => format.format({value: round(amount), type: format.Type.CURRENCY})
-            const row = (label, value) => value === '' || value === null || value === undefined ? '' :
-                `<tr><th>${escapehtml(label)}</th><td>${escapehtml(value)}</td></tr>`
+            // "225103004 Current Liabilities : ... : Social Security Fund" -> "Social Security Fund" (full name on hover)
+            const shortaccount = name => String(name).split(' : ').pop().replace(/^\d+\s+/, '')
             const journalUrl = url.resolveRecord({recordType: journal.type, recordId: journal.id})
             const debtor = payment.debtorBank
             // only OneWorld accounts have subsidiaries (otherwise the field just holds 1)
@@ -339,40 +339,32 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
                 const text = fieldId => journal.getSublistText({sublistId: 'line', fieldId: fieldId, line: i}) || ''
                 const debit = parseFloat(journal.getSublistValue({sublistId: 'line', fieldId: 'debit', line: i})) || 0
                 const credit = parseFloat(journal.getSublistValue({sublistId: 'line', fieldId: 'credit', line: i})) || 0
-                lines.push(`<tr><td>${escapehtml(text('account'))}${text('entity') ? '<br><span class="lc-sub">' + escapehtml(text('entity')) + '</span>' : ''}` +
-                    `${text('memo') ? '<br><span class="lc-sub">' + escapehtml(text('memo')) + '</span>' : ''}</td>` +
-                    `<td class="lc-num">${debit ? money(debit) : ''}</td><td class="lc-num">${credit ? money(credit) : ''}</td></tr>`)
+                const entity = text('entity')
+                lines.push(`<div class="lc-line" title="${escapehtml(text('account'))}">` +
+                    `<span class="lc-acc">${escapehtml(shortaccount(text('account')))}${entity ? ' <span class="lc-muted">· ' + escapehtml(entity) + '</span>' : ''}</span>` +
+                    `<span class="lc-amt">${debit ? 'Dr ' + money(debit) : 'Cr ' + money(credit)}</span></div>`)
             }
+            const bank = debtor ? JSON.parse(debtor.custrecord_rdnchl_bank_prop).text : ''
+            const branch = debtor ? JSON.parse(debtor.custrecord_rdnchl_bank_branch_prop).text : ''
+            const memo = journal.getValue('memo')
             return `<div class="lc-card">
-                    <h3>Pay</h3>
-                    <div class="lc-amount">NPR ${escapehtml(money(payment.amount))}</div>
-                    <table class="lc-kv">
-                    ${row('Government Payment', payment.biller.label)}
-                    ${row('Payment Type', payment.nrt ? 'Non-Real-Time (NRT)' : 'Real-Time')}
-                    </table>
-                    <p class="lc-hint">In NCHL's page choose ${escapehtml(payment.billerKey)}; the bill amount must be the amount above.</p>
-                </div>
-                <div class="lc-card">
-                    <h3>Journal</h3>
-                    <table class="lc-kv">
-                    <tr><th>Journal</th><td><a href="${escapehtml(journalUrl)}" target="_blank">${escapehtml(journal.getValue('tranid') || journal.id)}</a></td></tr>
-                    ${row('Date', journal.getText('trandate'))}
-                    ${row('Subsidiary', subsidiary)}
-                    ${row('Memo', journal.getValue('memo'))}
-                    </table>
-                    <table class="lc-lines">
-                    <tr><th>Account</th><th class="lc-num">Debit</th><th class="lc-num">Credit</th></tr>
-                    ${lines.join('')}
-                    </table>
-                </div>
-                <div class="lc-card">
-                    <h3>Paid From</h3>
-                    <table class="lc-kv">
-                    ${row('Bank', debtor ? JSON.parse(debtor.custrecord_rdnchl_bank_prop).text : '')}
-                    ${row('Branch', debtor ? JSON.parse(debtor.custrecord_rdnchl_bank_branch_prop).text : '')}
-                    ${row('Account Name', debtor ? debtor.custrecord_rdnchl_account_name : '')}
-                    ${row('Account Number', debtor ? debtor.custrecord_rdnchl_account_number : '')}
-                    </table>
+                    <div class="lc-sec">
+                        <div class="lc-label">To pay</div>
+                        <div class="lc-amount">NPR ${escapehtml(money(payment.amount))}</div>
+                        <div>${escapehtml(payment.biller.label)} <span class="lc-badge">${payment.nrt ? 'NRT' : 'Real-time'}</span></div>
+                        <div class="lc-muted">Choose ${escapehtml(payment.billerKey)} in NCHL's page; the bill must be this amount.</div>
+                    </div>
+                    <div class="lc-sec">
+                        <div class="lc-label">From</div>
+                        <div>${escapehtml(bank)}${branch ? ', ' + escapehtml(branch) : ''}</div>
+                        <div class="lc-muted">${debtor ? escapehtml(debtor.custrecord_rdnchl_account_name) + ' · ' + escapehtml(debtor.custrecord_rdnchl_account_number) : ''}</div>
+                    </div>
+                    <div class="lc-sec">
+                        <div class="lc-label">Journal <a href="${escapehtml(journalUrl)}" target="_blank">#${escapehtml(journal.getValue('tranid') || journal.id)}</a>
+                            · ${escapehtml(journal.getText('trandate'))}${subsidiary ? ' · ' + escapehtml(subsidiary) : ''}</div>
+                        ${memo ? '<div class="lc-memo lc-muted" title="' + escapehtml(memo) + '">' + escapehtml(memo) + '</div>' : ''}
+                        ${lines.join('')}
+                    </div>
                 </div>`
         }
 
@@ -402,22 +394,22 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
             const billers = form.addField({id: 'custpage_billers', label: 'NCHL Billers', type: serverWidget.FieldType.INLINEHTML})
             billers.updateLayoutType({layoutType: serverWidget.FieldLayoutType.OUTSIDEBELOW})
             billers.defaultValue = `<style>
-                    .lc-gov{display:flex;gap:16px;align-items:flex-start;width:calc(100vw - 48px);margin-top:12px;font-size:13px}
-                    .lc-side{flex:0 0 340px;position:sticky;top:8px}
+                    .lc-gov{display:flex;gap:16px;align-items:flex-start;width:calc(100vw - 48px);margin-top:12px}
+                    .lc-side{flex:0 0 280px;position:sticky;top:8px}
                     .lc-main{flex:1 1 auto;min-width:0}
                     .lc-main iframe{width:100%;height:780px;border:1px solid #d0d7de;display:block}
-                    .lc-card{border:1px solid #d0d7de;border-radius:4px;background:#f8f9fa;padding:10px 12px;margin-bottom:12px}
-                    .lc-card h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:#555;letter-spacing:.04em}
-                    .lc-amount{font-size:22px;font-weight:bold;margin-bottom:6px}
-                    .lc-card table{width:100%;border-collapse:collapse}
-                    .lc-kv th{text-align:left;font-weight:normal;color:#666;padding:3px 8px 3px 0;vertical-align:top;white-space:nowrap}
-                    .lc-kv td{padding:3px 0;word-break:break-word}
-                    .lc-lines{margin-top:8px}
-                    .lc-lines th{text-align:left;color:#666;font-weight:normal;border-bottom:1px solid #d0d7de;padding:3px 4px}
-                    .lc-lines td{border-bottom:1px solid #e6e8eb;padding:4px;vertical-align:top}
-                    .lc-lines .lc-num{text-align:right;white-space:nowrap}
-                    .lc-sub{color:#666;font-size:12px}
-                    .lc-hint{margin:8px 0 0;color:#555}
+                    .lc-card{border:1px solid #d0d7de;border-radius:6px;background:#fff;font-size:13px;line-height:1.45;color:#222}
+                    .lc-sec{padding:10px 14px}
+                    .lc-sec+.lc-sec{border-top:1px solid #e6e8eb}
+                    .lc-label{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;margin-bottom:4px}
+                    .lc-label a{text-transform:none;font-size:12px}
+                    .lc-amount{font-size:24px;font-weight:600;margin-bottom:2px}
+                    .lc-badge{display:inline-block;font-size:11px;padding:0 6px;border-radius:8px;background:#e8f0fe;color:#1a56b0;margin-left:4px}
+                    .lc-muted{color:#6b7280;font-size:12px}
+                    .lc-memo{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:6px}
+                    .lc-line{display:flex;justify-content:space-between;gap:8px;padding:3px 0}
+                    .lc-acc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+                    .lc-amt{white-space:nowrap;font-variant-numeric:tabular-nums}
                     @media (max-width:1100px){.lc-gov{flex-direction:column}.lc-side{position:static;flex-basis:auto;width:100%}.lc-main{width:100%}}
                     </style>
                     <div class="lc-gov">
