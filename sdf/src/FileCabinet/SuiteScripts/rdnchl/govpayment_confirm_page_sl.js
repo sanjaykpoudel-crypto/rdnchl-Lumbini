@@ -340,30 +340,31 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
                 const debit = parseFloat(journal.getSublistValue({sublistId: 'line', fieldId: 'debit', line: i})) || 0
                 const credit = parseFloat(journal.getSublistValue({sublistId: 'line', fieldId: 'credit', line: i})) || 0
                 const entity = text('entity')
-                lines.push(`<div class="lc-line" title="${escapehtml(text('account'))}">` +
-                    `<span class="lc-acc">${escapehtml(shortaccount(text('account')))}${entity ? ' <span class="lc-muted">· ' + escapehtml(entity) + '</span>' : ''}</span>` +
-                    `<span class="lc-amt">${debit ? 'Dr ' + money(debit) : 'Cr ' + money(credit)}</span></div>`)
+                lines.push(`<div class="lc-row" title="${escapehtml(text('account'))}">` +
+                    `<span class="lc-acc">${escapehtml(shortaccount(text('account')))}` +
+                    `${entity ? '<span class="lc-sub">' + escapehtml(entity) + '</span>' : ''}</span>` +
+                    `<span class="lc-drcr">${debit ? 'Dr' : 'Cr'}</span><span class="lc-num">${money(debit || credit)}</span></div>`)
             }
             const bank = debtor ? JSON.parse(debtor.custrecord_rdnchl_bank_prop).text : ''
             const branch = debtor ? JSON.parse(debtor.custrecord_rdnchl_bank_branch_prop).text : ''
             const memo = journal.getValue('memo')
             return `<div class="lc-card">
                     <div class="lc-sec">
-                        <div class="lc-label">To pay</div>
+                        <div class="lc-head"><span class="lc-label">To pay</span><span class="lc-badge">${payment.nrt ? 'Non-real-time' : 'Real-time'}</span></div>
                         <div class="lc-amount">NPR ${escapehtml(money(payment.amount))}</div>
-                        <div>${escapehtml(payment.biller.label)} <span class="lc-badge">${payment.nrt ? 'NRT' : 'Real-time'}</span></div>
-                        <div class="lc-muted">Choose ${escapehtml(payment.billerKey)} in NCHL's page; the bill must be this amount.</div>
+                        <div class="lc-text">${escapehtml(payment.biller.label)}</div>
+                        <div class="lc-note">Choose ${escapehtml(payment.billerKey)} in NCHL's page. The bill must be this amount.</div>
                     </div>
                     <div class="lc-sec">
-                        <div class="lc-label">From</div>
-                        <div>${escapehtml(bank)}${branch ? ', ' + escapehtml(branch) : ''}</div>
-                        <div class="lc-muted">${debtor ? escapehtml(debtor.custrecord_rdnchl_account_name) + ' · ' + escapehtml(debtor.custrecord_rdnchl_account_number) : ''}</div>
+                        <div class="lc-head"><span class="lc-label">Paid from</span></div>
+                        <div class="lc-text">${escapehtml(bank)}${branch ? ', ' + escapehtml(branch) : ''}</div>
+                        ${debtor ? '<div class="lc-sub">' + escapehtml(debtor.custrecord_rdnchl_account_name) + ' · ' + escapehtml(debtor.custrecord_rdnchl_account_number) + '</div>' : ''}
                     </div>
                     <div class="lc-sec">
-                        <div class="lc-label">Journal <a href="${escapehtml(journalUrl)}" target="_blank">#${escapehtml(journal.getValue('tranid') || journal.id)}</a>
-                            · ${escapehtml(journal.getText('trandate'))}${subsidiary ? ' · ' + escapehtml(subsidiary) : ''}</div>
-                        ${memo ? '<div class="lc-memo lc-muted" title="' + escapehtml(memo) + '">' + escapehtml(memo) + '</div>' : ''}
-                        ${lines.join('')}
+                        <div class="lc-head"><span class="lc-label">Journal</span>
+                            <span class="lc-ref"><a href="${escapehtml(journalUrl)}" target="_blank">#${escapehtml(journal.getValue('tranid') || journal.id)}</a> · ${escapehtml(journal.getText('trandate'))}${subsidiary ? ' · ' + escapehtml(subsidiary) : ''}</span></div>
+                        ${memo ? '<div class="lc-memo" title="' + escapehtml(memo) + '">' + escapehtml(memo) + '</div>' : ''}
+                        <div class="lc-lines">${lines.join('')}</div>
                     </div>
                 </div>`
         }
@@ -389,27 +390,34 @@ define(['N/ui/serverWidget', 'N/record', 'N/search', 'N/ui/message', 'N/redirect
             addhidden(form, 'custpage_step', 'review')
             addhidden(form, 'custpage_session', session.sessionId)
             addhidden(form, 'custpage_npiobject', '')
-            // the journal on the left, NCHL's page on the right (stacked on a narrow window); outside NetSuite's field
+            // the journal in three boxes on the left, NCHL's page on the right (stacked on a narrow window); outside NetSuite's field
             // cells, which would keep it narrow
             const billers = form.addField({id: 'custpage_billers', label: 'NCHL Billers', type: serverWidget.FieldType.INLINEHTML})
             billers.updateLayoutType({layoutType: serverWidget.FieldLayoutType.OUTSIDEBELOW})
             billers.defaultValue = `<style>
                     .lc-gov{display:flex;gap:16px;align-items:flex-start;width:calc(100vw - 48px);margin-top:12px}
-                    .lc-side{flex:0 0 280px;position:sticky;top:8px}
+                    .lc-side{flex:0 0 300px;position:sticky;top:8px}
                     .lc-main{flex:1 1 auto;min-width:0}
                     .lc-main iframe{width:100%;height:780px;border:1px solid #d0d7de;display:block}
-                    .lc-card{border:1px solid #d0d7de;border-radius:6px;background:#fff;font-size:13px;line-height:1.45;color:#222}
-                    .lc-sec{padding:10px 14px}
-                    .lc-sec+.lc-sec{border-top:1px solid #e6e8eb}
-                    .lc-label{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;margin-bottom:4px}
-                    .lc-label a{text-transform:none;font-size:12px}
-                    .lc-amount{font-size:24px;font-weight:600;margin-bottom:2px}
-                    .lc-badge{display:inline-block;font-size:11px;padding:0 6px;border-radius:8px;background:#e8f0fe;color:#1a56b0;margin-left:4px}
-                    .lc-muted{color:#6b7280;font-size:12px}
-                    .lc-memo{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:6px}
-                    .lc-line{display:flex;justify-content:space-between;gap:8px;padding:3px 0}
-                    .lc-acc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-                    .lc-amt{white-space:nowrap;font-variant-numeric:tabular-nums}
+                    .lc-card{display:flex;flex-direction:column;gap:12px;color:#1f2937;font:13px/18px Arial,Helvetica,sans-serif}
+                    .lc-card *{box-sizing:border-box;font-family:inherit}
+                    .lc-sec{border:1px solid #d0d7de;border-radius:6px;background:#fff;padding:12px 16px}
+                    .lc-head{display:flex;justify-content:space-between;align-items:center;gap:8px;height:18px;margin-bottom:8px}
+                    .lc-label{font-size:11px;line-height:18px;font-weight:bold;text-transform:uppercase;letter-spacing:.06em;color:#6b7280}
+                    .lc-ref{font-size:12px;line-height:18px;color:#6b7280;white-space:nowrap}
+                    .lc-ref a{color:#255599;text-decoration:none;font-weight:bold}
+                    .lc-ref a:hover{text-decoration:underline}
+                    .lc-badge{font-size:11px;line-height:18px;padding:0 8px;border-radius:9px;background:#e8f0fe;color:#1a56b0;white-space:nowrap}
+                    .lc-amount{font-size:20px;line-height:26px;font-weight:bold;margin-bottom:4px}
+                    .lc-text{font-size:13px;line-height:18px}
+                    .lc-sub{display:block;font-size:12px;line-height:18px;color:#6b7280}
+                    .lc-note{font-size:12px;line-height:18px;color:#6b7280;margin-top:8px}
+                    .lc-memo{font-size:12px;line-height:18px;color:#6b7280;margin-bottom:8px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+                    .lc-row{display:grid;grid-template-columns:1fr auto 72px;column-gap:8px;align-items:baseline;padding:6px 0}
+                    .lc-row+.lc-row{border-top:1px dashed #e5e7eb}
+                    .lc-acc{min-width:0;overflow-wrap:anywhere}
+                    .lc-drcr{font-size:11px;color:#6b7280}
+                    .lc-num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
                     @media (max-width:1100px){.lc-gov{flex-direction:column}.lc-side{position:static;flex-basis:auto;width:100%}.lc-main{width:100%}}
                     </style>
                     <div class="lc-gov">
