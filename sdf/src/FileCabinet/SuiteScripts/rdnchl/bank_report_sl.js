@@ -20,8 +20,13 @@ define(['N/ui/serverWidget', 'N/search', 'N/url', 'N/format', 'N/redirect', 'N/f
                 .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
         }
 
+        // NCHL writes statement amounts with Nepali grouping, e.g. "2,10,358.77"
+        function amountof(value) {
+            return parseFloat(String(value === null || value === undefined ? '' : value).replace(/,/g, '')) || 0
+        }
+
         function money(amount) {
-            return format.format({value: Math.round((parseFloat(amount) || 0) * 100) / 100, type: format.Type.CURRENCY})
+            return format.format({value: Math.round(amountof(amount) * 100) / 100, type: format.Type.CURRENCY})
         }
 
         function pagelink(params) {
@@ -195,11 +200,33 @@ define(['N/ui/serverWidget', 'N/search', 'N/url', 'N/format', 'N/redirect', 'N/f
         }
 
         /**
-         * yyyy-MM-dd[ HH:mm:ss] from NCHL in the user's date format
+         * NCHL's date in the user's date format: yyyy-MM-dd (period) or dd-MM-yyyy (statement lines), time ignored
          */
         function nsdate(text) {
-            const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(text || ''))
-            return m ? format.format({value: new Date(+m[1], +m[2] - 1, +m[3]), type: format.Type.DATE}) : String(text || '')
+            const value = String(text || '')
+            const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
+            const dmy = /^(\d{2})-(\d{2})-(\d{4})/.exec(value)
+            const date = iso ? new Date(+iso[1], +iso[2] - 1, +iso[3]) : dmy ? new Date(+dmy[3], +dmy[2] - 1, +dmy[1]) : null
+            return date ? format.format({value: date, type: format.Type.DATE}) : value
+        }
+
+        /**
+         * NCHL sends the opening and closing balance as statement lines without a date: keep them apart from the
+         * transactions
+         */
+        function splitlines(statements) {
+            const result = {opening: null, closing: null, lines: []}
+            ;(Array.isArray(statements) ? statements : []).forEach(line => {
+                const label = String(line.description || line.remarks || '').trim().toLowerCase()
+                if (!line.tranDate && label === 'opening balance') {
+                    result.opening = line
+                } else if (!line.tranDate && label === 'closing balance') {
+                    result.closing = line
+                } else {
+                    result.lines.push(line)
+                }
+            })
+            return result
         }
 
         /**
@@ -313,10 +340,13 @@ define(['N/ui/serverWidget', 'N/search', 'N/url', 'N/format', 'N/redirect', 'N/f
                 return form
             }
             const data = statement.data
-            const lines = Array.isArray(data.statements) ? data.statements : []
+            const parts = splitlines(data.statements)
+            const lines = parts.lines
             const refs = getnchlrefs(period.from, period.to)
-            const totalDebit = lines.reduce((t, l) => t + (parseFloat(l.debit) || 0), 0)
-            const totalCredit = lines.reduce((t, l) => t + (parseFloat(l.credit) || 0), 0)
+            const totalDebit = lines.reduce((t, l) => t + amountof(l.debit), 0)
+            const totalCredit = lines.reduce((t, l) => t + amountof(l.credit), 0)
+            const balancerow = (label, line) => line
+                ? `<div class="lc-row"><span>${label}</span><span>${escapehtml(money(line.balance))}</span></div>` : ''
             const matched = lines.filter(l => matchline(l, refs)).length
 
             addhtml(form, 'custpage_summary', `${PAGE_CSS}<div class="lc-cards">
@@ -325,8 +355,10 @@ define(['N/ui/serverWidget', 'N/search', 'N/url', 'N/format', 'N/redirect', 'N/f
                     <div class="lc-text">${escapehtml(data.accountNumber || account.accountNumber)}</div>
                     <div class="lc-sub">${escapehtml([account.bankName, data.branchName && data.branchName !== '-' ? data.branchName : account.branchName, data.accountType].filter(Boolean).join(' · '))}</div></div>
                 <div class="lc-box"><div class="lc-label">${escapehtml(nsdate(data.startDate || isodate(period.from)))} to ${escapehtml(nsdate(data.endDate || isodate(period.to)))}</div>
-                    <div class="lc-row"><span>Money in (${lines.filter(l => parseFloat(l.credit)).length})</span><span>${escapehtml(money(totalCredit))}</span></div>
-                    <div class="lc-row"><span>Money out (${lines.filter(l => parseFloat(l.debit)).length})</span><span>${escapehtml(money(totalDebit))}</span></div>
+                    ${balancerow('Opening balance', parts.opening)}
+                    <div class="lc-row"><span>Money in (${lines.filter(l => amountof(l.credit)).length})</span><span>${escapehtml(money(totalCredit))}</span></div>
+                    <div class="lc-row"><span>Money out (${lines.filter(l => amountof(l.debit)).length})</span><span>${escapehtml(money(totalDebit))}</span></div>
+                    ${balancerow('Closing balance', parts.closing)}
                     <div class="lc-row"><span>Paid through NCHL from NetSuite</span><span>${matched}</span></div></div>
                 <div class="lc-box"><div class="lc-label">Balance now</div>
                     <div class="lc-big">${escapehtml(data.currency || 'NPR')} ${escapehtml(money(data.accountBalance))}</div>
@@ -351,20 +383,21 @@ define(['N/ui/serverWidget', 'N/search', 'N/url', 'N/format', 'N/redirect', 'N/f
                         list.setSublistValue({id: id, line: index, value: String(value)})
                     }
                 }
-                const time = /\d{2}:\d{2}/.exec(String(line.tranDate || ''))
-                set('custpage_date', escapehtml(nsdate(line.tranDate) + (time ? ' ' + time[0] : '')))
+                // banks that give no time send 00:00:00
+                const time = /\s(\d{2}:\d{2})/.exec(String(line.tranDate || ''))
+                set('custpage_date', escapehtml(nsdate(line.tranDate) + (time && time[1] !== '00:00' ? ' ' + time[1] : '')))
                 set('custpage_value_date', escapehtml(nsdate(line.valueDate)))
                 set('custpage_description', cut(line.description))
                 set('custpage_remarks', cut(line.remarks))
                 set('custpage_cheque', cut(line.chequeNo))
-                if (parseFloat(line.debit)) {
-                    set('custpage_debit', parseFloat(line.debit))
+                if (amountof(line.debit)) {
+                    set('custpage_debit', amountof(line.debit))
                 }
-                if (parseFloat(line.credit)) {
-                    set('custpage_credit', parseFloat(line.credit))
+                if (amountof(line.credit)) {
+                    set('custpage_credit', amountof(line.credit))
                 }
                 if (line.balance !== null && line.balance !== undefined && line.balance !== '') {
-                    set('custpage_balance', parseFloat(line.balance) || 0)
+                    set('custpage_balance', amountof(line.balance))
                 }
                 const ref = matchline(line, refs)
                 if (ref) {
@@ -397,10 +430,10 @@ define(['N/ui/serverWidget', 'N/search', 'N/url', 'N/format', 'N/redirect', 'N/f
                 const text = String(value === null || value === undefined ? '' : value)
                 return /[",\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text
             }
-            const amount = value => (parseFloat(value) ? (Math.round(parseFloat(value) * 100) / 100).toFixed(2) : '')
+            const amount = value => (amountof(value) ? (Math.round(amountof(value) * 100) / 100).toFixed(2) : '')
             const rows = [['Date', 'Description', 'Reference No', 'Transaction Id', 'Deposit', 'Withdrawal', 'Bank Party Name',
                 'Bank Party Account Number', 'Bank Party IBAN']]
-            ;(statement.data.statements || []).forEach(line => {
+            splitlines(statement.data.statements).lines.forEach(line => {
                 rows.push([nsdate(line.tranDate), line.description, line.referenceNo || line.remarks || line.chequeNo, line.tranId,
                     amount(line.credit), amount(line.debit), '', '', ''])
             })

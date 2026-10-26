@@ -1018,7 +1018,9 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
             },
             /**
              * The bank's statement of a company account (NPI spec 13, fetch account statement). Each bank sets how
-             * many days one request may cover, and must have the service switched on.
+             * many days one request may cover, and must have the service switched on. NCHL gives the statement
+             * permission to the NPI Billers login (govbillers.NPI): the default login is answered 403.
+             * Amounts come with Nepali grouping ("2,10,358.77") and dates as dd-MM-yyyy HH:mm:ss.
              * @param {{bankCode: string, accountNumber: string, fromDate: string, toDate: string}} option dates yyyy-MM-dd
              * @returns {{ok: boolean, message: string, data?: Object}} data: NCHL's statementResponseData
              */
@@ -1026,6 +1028,7 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
                 const response = this.callnchl({
                     action: 'ACCOUNT STATEMENT',
                     path: '/api/v1/ac-stmt',
+                    conn: 'BILLER',
                     body: {bankCode: option.bankCode, fromDate: option.fromDate, toDate: option.toDate, accountNumber: option.accountNumber},
                     logsummary: body => nchlsummary(body, data => ({
                         statementResponseCode: data.statementResponseCode || data.responseCode,
