@@ -10,6 +10,8 @@
       <object>customtransaction_contra</object>
       <object>customrecord_rd_nchl_bank_detail</object>
       <object>customrecord_nchl_transaction</object>
+      <object>customlist_nchl_payment_types</object>
+      <object>custentity_entity_bank_detail</object>
     </objects>
   </dependencies>
 </manifest>

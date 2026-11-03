@@ -38,7 +38,8 @@ define(['N/url', './rdmodule', 'N/record', 'N/runtime'], function (url, rdmodu, 
             if (context.type === 'view') {
                 if (rdmodu.getpaidlock(context.newRecord)) {
                     rdmodu.hideeditbutton(form)
-                } else if (context.newRecord.getValue('approvalstatus') === '2' && rdmodu.canpay()) {
+                } else if ((context.newRecord.type === 'check' || context.newRecord.getValue('approvalstatus') === '2') && rdmodu.canpay()) {
+                    // NetSuite checks have no approval: any saved check can be paid (the client's choice)
                     const targetUrl = url.resolveScript({
                         scriptId: 'customscript_lc_payment_confirm_sl',
                         deploymentId: 'customdeploy_lc_payment_confirm_sl',

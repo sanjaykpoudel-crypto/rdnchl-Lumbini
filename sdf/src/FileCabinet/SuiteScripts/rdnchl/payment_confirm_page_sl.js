@@ -4,7 +4,9 @@
  */
 define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', 'N/redirect', 'N/ui/message', 'N/error'], function (serverWidget, record, rdmodu, search, config, redirect, message, error) {
     // This page runs as administrator, so it only pays the record types its Pay Online button is deployed on
-    const PAYABLE_TYPES = ['vendorpayment', 'vendorprepayment']
+    const PAYABLE_TYPES = ['vendorpayment', 'vendorprepayment', 'check']
+    // NetSuite checks have no approval: an Allowed Payer may pay any saved check (the client's choice)
+    const NO_APPROVAL_TYPES = ['check']
 
     function loadpayable(type, id) {
         if (!PAYABLE_TYPES.includes(type)) {
@@ -18,6 +20,9 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', '
     }
 
     function getpayamount(tranRecord) {
+        if (tranRecord.type === 'check') {
+            return tranRecord.getValue('usertotal')
+        }
         return tranRecord.type === 'vendorpayment' ? tranRecord.getValue('total') : tranRecord.getValue('payment')
     }
 
@@ -37,7 +42,7 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', '
         if (tranRecord.getValue('custbody_rdnchl_paid_online')) {
             return {title: 'Payment already submitted', message: 'This record is already marked as paid online.'}
         }
-        if (tranRecord.getValue('approvalstatus') !== '2') {
+        if (!NO_APPROVAL_TYPES.includes(tranRecord.type) && tranRecord.getValue('approvalstatus') !== '2') {
             return {title: 'Not approved', message: 'Only approved payments can be paid online.'}
         }
         return null
@@ -383,7 +388,9 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', '
                     params.crbankbranch = payeeAccount.branch.value
                     params.craccountname = payeeAccount.accountName
                     params.craccount = payeeAccount.accountNumber
-                    params.endtoendid = (tranRecord.getValue('tranid') + tranRecord.getText('entity')).replace(/\s/g, '')
+                    // a check waiting to be printed has no number yet
+                    const docNumber = tranRecord.getValue('tranid') || (tranRecord.type === 'check' ? 'CHK' + tranRecord.id : '')
+                    params.endtoendid = (docNumber + tranRecord.getText('entity')).replace(/\s/g, '')
                 }
                 const relRecProp = {type: tranRecord.type, id: tranRecord.id}
                 const nchlTranRecord = rdmodu.savenchltran({

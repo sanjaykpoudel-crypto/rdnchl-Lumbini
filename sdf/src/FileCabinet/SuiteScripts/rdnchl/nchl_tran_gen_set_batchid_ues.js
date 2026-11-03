@@ -39,7 +39,7 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
                 return null
             }
             let page = null
-            if (relType === 'vendorpayment' || relType === 'vendorprepayment') {
+            if (relType === 'vendorpayment' || relType === 'vendorprepayment' || relType === 'check') {
                 page = {scriptId: 'customscript_lc_payment_confirm_sl', deploymentId: 'customdeploy_lc_payment_confirm_sl'}
             } else if (relType.indexOf('customtransaction_contra') === 0) {
                 page = {scriptId: 'customscript_lc_contra_pmt_confirm', deploymentId: 'customdeploy_lc_contra_pmt_confirm'}
