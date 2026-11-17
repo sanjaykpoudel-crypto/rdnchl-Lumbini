@@ -11,12 +11,13 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
 
         /**
          * NCHL connection: the default one (npiconfig, through the relay) for payments, or the NPI Billers one
-         * (govbillers.NPI, NCHL's separate UAT login) for paying bills confirmed in the iframe
+         * (govbillers.NPI, NCHL's separate UAT login) for paying bills confirmed in the iframe. In production
+         * govbillers.NPI is null and the default (live) login is used for everything.
          * @param {string} [name] 'BILLER' for the NPI Billers connection
          * @returns {{HOST, USERNAME, PASSWORD, USERID, USERPASS, CERTIFICATE_ID, cachePrefix: string}}
          */
         function connection(name) {
-            if (name !== 'BILLER') {
+            if (name !== 'BILLER' || !govbillers.NPI) {
                 return Object.assign({cachePrefix: ''}, npiconf)
             }
             let secrets
@@ -772,7 +773,7 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
              * @returns {string} token
              */
             sigtoken: function (option) {
-                const conn = option.conn === 'BILLER' ? govbillers.NPI : npiconf
+                const conn = option.conn === 'BILLER' && govbillers.NPI ? govbillers.NPI : npiconf
                 const tokenString = option.batchstr + ',' + option.transtr + ',' + conn.USERID
                 const signer = certificate.createSigner({
                     certId: conn.CERTIFICATE_ID,
@@ -1018,8 +1019,9 @@ define(['N/http', 'N/https', 'N/file', 'N/encode', './npiconfig', 'N/cache', 'N/
             },
             /**
              * The bank's statement of a company account (NPI spec 13, fetch account statement). Each bank sets how
-             * many days one request may cover, and must have the service switched on. NCHL gives the statement
-             * permission to the NPI Billers login (govbillers.NPI): the default login is answered 403.
+             * many days one request may cover, and must have the service switched on. In UAT NCHL gives the
+             * statement permission to the NPI Billers login (govbillers.NPI): the default login is answered 403.
+             * Live uses the company's live login.
              * Amounts come with Nepali grouping ("2,10,358.77") and dates as dd-MM-yyyy HH:mm:ss.
              * @param {{bankCode: string, accountNumber: string, fromDate: string, toDate: string}} option dates yyyy-MM-dd
              * @returns {{ok: boolean, message: string, data?: Object}} data: NCHL's statementResponseData

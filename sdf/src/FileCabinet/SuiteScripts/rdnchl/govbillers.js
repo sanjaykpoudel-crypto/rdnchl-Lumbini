@@ -6,7 +6,9 @@
 // confirms the bill in NCHL's page, which offers every biller, but only the billers below can be paid from NetSuite.
 // App codes and fields come from NCHL UAT (/billers/v2/categories and /billers/v2/appjourneydetails); check them in
 // production before go-live.
-define([], function () {
+// The account picks the NCHL environment: the production account uses NCHL live, a sandbox uses NCHL UAT.
+define(['N/runtime'], function (runtime) {
+    const LIVE = runtime.envType === runtime.EnvType.PRODUCTION
     const BILLERS = {
         IRD: {
             label: 'IRD (TDS, VAT, salary tax)',
@@ -34,20 +36,22 @@ define([], function () {
                 {id: 'refId', label: 'Submission Number', maxLength: 35},
                 {id: 'freeCode2', label: 'Office Code', maxLength: 100}
             ]
-        },
+        }
+    }
+    if (!LIVE) {
         // UAT only, to test the iframe payment end to end with NCHL's test billers (NTC / Ncell top-up, internet, TV;
         // top-ups start at Rs 10): any biller confirmed in NCHL's page is accepted, the amount must still match.
-        // Remove before go-live, with its list value val_lc_gov_test.
-        TEST: {
+        // Not offered in production, where its list value val_lc_gov_test is refused.
+        BILLERS.TEST = {
             label: 'TEST top-up, internet, TV (UAT only)',
             appId: 'MER-1544-APP-1',
             anyIframeAppId: true,
             amountFromBiller: false,
             fields: [{id: 'refId', label: 'Mobile Number', maxLength: 10}]
-        },
+        }
         // UAT only: the same test billers paid non-real-time (NRT), which NCHL otherwise uses only above NPR 20 lakh.
-        // Remove before go-live, with its list value val_lc_gov_test_nrt.
-        TESTNRT: {
+        // Not offered in production, where its list value val_lc_gov_test_nrt is refused.
+        BILLERS.TESTNRT = {
             label: 'TESTNRT non-real-time top-up (UAT only)',
             appId: 'MER-1544-APP-1',
             anyIframeAppId: true,
@@ -59,27 +63,35 @@ define([], function () {
 
     return {
         BILLERS: BILLERS,
-        // NPI Billers iframe (spec v2), UAT values from NCHL. The key files are made from NCHL's certificates
-        // (NPIBILLERSIGN.pfx: our signing key, PS256; NPIBILLERENC.cer: NCHL's encryption certificate, RSA-OAEP-256 +
-        // A256GCM), kept in the git-ignored rdnchl-keys folder and uploaded by the SDF deploy; never commit them.
-        // Production needs NCHL's production URL, participant code and certificates.
-        IFRAME: {
-            URL: 'https://uat.connectips.com/billers/billers',
+        // NPI Billers iframe (spec v2). The key files are made from NCHL's certificates and kept in the git-ignored
+        // rdnchl-keys folder, which the SDF deploy uploads; never commit them. Our signing key (PS256) is the same in
+        // UAT and live (NCHL: the existing .pfx works for both). NCHL's encryption certificate (RSA-OAEP-256 + A256GCM),
+        // which also checks the signature of NCHL's bill: NPIBILLERENC.cer in UAT, NEPALPAYBILLERS.cer live.
+        IFRAME: LIVE ? {
+            URL: 'https://billers.nepalpay.com.np/billers/billers',
             // messages are only accepted from this origin
-            ORIGIN: 'https://uat.connectips.com',
-            PARTICIPANT_CODE: 'LUMBINICERAMICS',
+            ORIGIN: 'https://billers.nepalpay.com.np',
+            PARTICIPANT_CODE: 'lumbiniceramic',
             // kid for the JWE and JWS headers: NCHL gave none, so the headers carry no kid
             NCHL_KEY_ID: '',
             OWN_KEY_ID: '',
-            // our private key (PEM, from NPIBILLERSIGN.pfx) and NCHL's certificate (PEM, from NPIBILLERENC.cer), saved as
-            // .txt so the File Cabinet keeps them as text; the certificate also checks the signature of NCHL's bill
+            // PEM saved as .txt so the File Cabinet keeps them as text
+            PRIVATE_KEY_FILE: '/SuiteScripts/rdnchl-keys/npibillersign_private_pem.txt',
+            NCHL_PUBLIC_KEY_FILE: '/SuiteScripts/rdnchl-keys/nepalpaybillers_enc_pem.txt'
+        } : {
+            URL: 'https://uat.connectips.com/billers/billers',
+            ORIGIN: 'https://uat.connectips.com',
+            PARTICIPANT_CODE: 'LUMBINICERAMICS',
+            NCHL_KEY_ID: '',
+            OWN_KEY_ID: '',
             PRIVATE_KEY_FILE: '/SuiteScripts/rdnchl-keys/npibillersign_private_pem.txt',
             NCHL_PUBLIC_KEY_FILE: '/SuiteScripts/rdnchl-keys/npibillerenc_pem.txt'
         },
-        // NPI connection for paying bills confirmed in the iframe (confirmbillerpay.do): NCHL's separate UAT login, not
-        // npiconfig. The two passwords are in CREDENTIALS_FILE ({"PASSWORD": basic auth, "USERPASS": user}) in the
+        // NPI connection for paying bills confirmed in the iframe (confirmbillerpay.do) and for bank statements.
+        // Live: null, so the company's live NPI login (npiconfig) is used, as NCHL asked. UAT: NCHL's separate UAT
+        // login; the two passwords are in CREDENTIALS_FILE ({"PASSWORD": basic auth, "USERPASS": user}) in the
         // git-ignored rdnchl-keys folder. CERTIFICATE_ID is NCHL's NPI.pfx uploaded under Setup > Company > Certificates.
-        NPI: {
+        NPI: LIVE ? null : {
             // direct from NetSuite (NCHL whitelists NetSuite's IP). Through the relay instead:
             // 'http://202.63.242.6:8181/devnpi' (relay.json PathTargets "/devnpi": "https://devnpi.connectips.com")
             HOST: 'https://devnpi.connectips.com',
