@@ -71,7 +71,7 @@ define(['N/runtime', 'N/record', './rdmodule'], function (runtime, record, rdmod
                         craccount: crBankDetail.custrecord_rdnchl_account_number
                     }
                     if (!isTransfer) {
-                        batch.endtoendid = (tranRecord.getValue('tranid') + tranRecord.getText('entity')).replace(/\s/g, '')
+                        batch.endtoendid = (tranRecord.getValue('tranid') + tranRecord.getText('entity')).replace(/\s/g, '').slice(0, 30)
                     }
                     log.debug('BATCH_DETAIL', batch)
                     const relRecProp = {

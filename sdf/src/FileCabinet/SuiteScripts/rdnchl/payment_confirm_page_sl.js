@@ -390,7 +390,8 @@ define(['N/ui/serverWidget', 'N/record', './rdmodule', 'N/search', 'N/config', '
                     params.craccount = payeeAccount.accountNumber
                     // a check waiting to be printed has no number yet
                     const docNumber = tranRecord.getValue('tranid') || (tranRecord.type === 'check' ? 'CHK' + tranRecord.id : '')
-                    params.endtoendid = (docNumber + tranRecord.getText('entity')).replace(/\s/g, '')
+                    // NCHL takes at most 30 characters (E007 "Max Length exceeded" otherwise)
+                    params.endtoendid = (docNumber + tranRecord.getText('entity')).replace(/\s/g, '').slice(0, 30)
                 }
                 const relRecProp = {type: tranRecord.type, id: tranRecord.id}
                 const nchlTranRecord = rdmodu.savenchltran({
