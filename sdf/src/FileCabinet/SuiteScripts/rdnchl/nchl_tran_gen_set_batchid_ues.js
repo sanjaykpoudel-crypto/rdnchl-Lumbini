@@ -53,15 +53,21 @@ define(['N/record', 'N/config', './rdmodule', 'N/ui/message', 'N/url', 'N/runtim
             return page ? url.resolveScript(Object.assign(page, {params: {recordtype: relType, recordid: relId}})) : null
         }
 
+        // the Status is only a list label: a failure here is logged and must never stop a payment, which is sent
+        // after the NCHL transaction is saved (production first refused the new field in searches)
         function updatestatus(recType, recId) {
-            const saved = search.lookupFields({
-                type: recType,
-                id: recId,
-                columns: ['custrecord_nchl_tran_response', 'custrecord_nchl_tran_raw_detail', 'custrecord_lc_nchl_status']
-            })
-            const status = rdmodu.getstatuslabel(saved.custrecord_nchl_tran_response, saved.custrecord_nchl_tran_raw_detail)
-            if (status !== saved.custrecord_lc_nchl_status) {
-                record.submitFields({type: recType, id: recId, values: {custrecord_lc_nchl_status: status}})
+            try {
+                const saved = search.lookupFields({
+                    type: recType,
+                    id: recId,
+                    columns: ['custrecord_nchl_tran_response', 'custrecord_nchl_tran_raw_detail', 'custrecord_lc_nchl_status']
+                })
+                const status = rdmodu.getstatuslabel(saved.custrecord_nchl_tran_response, saved.custrecord_nchl_tran_raw_detail)
+                if (status !== saved.custrecord_lc_nchl_status) {
+                    record.submitFields({type: recType, id: recId, values: {custrecord_lc_nchl_status: status}})
+                }
+            } catch (e) {
+                log.error('NCHL_STATUS_NOT_UPDATED', {id: recId, error: e.message || String(e)})
             }
         }
 
