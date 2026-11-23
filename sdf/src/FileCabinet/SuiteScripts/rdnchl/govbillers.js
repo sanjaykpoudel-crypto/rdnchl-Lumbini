@@ -64,9 +64,9 @@ define(['N/runtime'], function (runtime) {
 
     // NPI Billers iframe (spec v2). The key files are made from NCHL's certificates and kept in the git-ignored
     // rdnchl-keys folder, which the SDF deploy uploads; never commit them. Our signing key (PS256): NPIBILLERSIGN.pfx
-    // in UAT, the company's LUMBINICERAMIC.pfx live (with the UAT key live NCHL answered error 806). NCHL's encryption
-    // certificate (RSA-OAEP-256 + A256GCM), which also checks the signature of NCHL's bill: NPIBILLERENC.cer in UAT,
-    // NEPALPAYBILLERS.cer live.
+    // in UAT, the company's LUMBINICERAMIC.pfx live. NCHL's encryption certificate (RSA-OAEP-256 + A256GCM), which also
+    // checks the signature of NCHL's bill: NPIBILLERENC.cer in UAT and live. NCHL resent it as NEPALPAYBILLERS.cer on
+    // 23 Nov 2026 (the one sent first got error 800). It shows as expired on 27 Sep 2026, but live still accepts it.
     const LIVE_IFRAME = {
         URL: 'https://billers.nepalpay.com.np/billers/billers',
         // messages are only accepted from this origin
@@ -77,7 +77,7 @@ define(['N/runtime'], function (runtime) {
         OWN_KEY_ID: '',
         // PEM saved as .txt so the File Cabinet keeps them as text
         PRIVATE_KEY_FILE: '/SuiteScripts/rdnchl-keys/lumbiniceramic_sign_private_pem.txt',
-        NCHL_PUBLIC_KEY_FILE: '/SuiteScripts/rdnchl-keys/nepalpaybillers_enc_pem.txt'
+        NCHL_PUBLIC_KEY_FILE: '/SuiteScripts/rdnchl-keys/npibillerenc_pem.txt'
     }
     const UAT_IFRAME = {
         URL: 'https://uat.connectips.com/billers/billers',
