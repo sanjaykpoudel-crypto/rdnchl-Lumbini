@@ -42,7 +42,7 @@ define(['N/runtime'], function (runtime) {
     const UAT_BILLERS = {
         // UAT only, to test the iframe payment end to end with NCHL's test billers (NTC / Ncell top-up, internet, TV;
         // top-ups start at Rs 10): any biller confirmed in NCHL's page is accepted, the amount must still match.
-        // Not offered in production, where its list value val_lc_gov_test is refused.
+        // In production the same list value (val_lc_gov_test) pays LIVE_TEST_BILLERS.TEST instead.
         TEST: {
             label: 'TEST top-up, internet, TV (UAT only)',
             appId: 'MER-1544-APP-1',
@@ -57,6 +57,16 @@ define(['N/runtime'], function (runtime) {
             appId: 'MER-1544-APP-1',
             anyIframeAppId: true,
             forceNrt: true,
+            amountFromBiller: false,
+            fields: [{id: 'refId', label: 'Mobile Number', maxLength: 10}]
+        }
+    }
+    const LIVE_TEST_BILLERS = {
+        // Production only, to test a real payment end to end: an NTC Mobile top-up, NCHL live app code MER-93-APP-7
+        // (fixed amounts from Rs 20). Only that app code is accepted. Uses the list value val_lc_gov_test.
+        TEST: {
+            label: 'TEST NTC top-up (live test)',
+            appId: 'MER-93-APP-7',
             amountFromBiller: false,
             fields: [{id: 'refId', label: 'Mobile Number', maxLength: 10}]
         }
@@ -104,7 +114,7 @@ define(['N/runtime'], function (runtime) {
 
     return {
         get BILLERS() {
-            return islive() ? BILLERS : Object.assign({}, BILLERS, UAT_BILLERS)
+            return Object.assign({}, BILLERS, islive() ? LIVE_TEST_BILLERS : UAT_BILLERS)
         },
         // NPI Billers iframe: live in production, UAT in a sandbox
         get IFRAME() {
