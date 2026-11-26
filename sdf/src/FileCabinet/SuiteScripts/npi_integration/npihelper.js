@@ -333,6 +333,15 @@ define(['N/search', 'N/record', './rdlib/js/nepali.datepicker.v3.7.min', 'N/runt
                         fieldId: 'custbody_npi_tran_no',
                         value: option.npi_tran_no
                     });
+                    // One receipt per NCHL transaction id. NetSuite refuses a second customer
+                    // payment with the same external id, even when NCHL posts the same
+                    // transaction twice within a second (seen in production, 2-7 s apart).
+                    if (option.npi_tran_no) {
+                        custR.setValue({
+                            fieldId: 'externalid',
+                            value: this.externalidfor(option.npi_tran_no)
+                        });
+                    }
                     //const paymentRecordId = '99999';
                     const paymentRecordId = custR.save();
                     log.debug({title: 'RECORD_SAVED', details: `Payment saved record = ${paymentRecordId}`});
@@ -349,11 +358,27 @@ define(['N/search', 'N/record', './rdlib/js/nepali.datepicker.v3.7.min', 'N/runt
                     }
                 } catch (e) {
                     log.debug({title: e.name, details: e});
+                    // Lost the race against a parallel post of the same transaction:
+                    // the receipt already exists, so NCHL must not re-push it.
+                    if (option.npi_tran_no && this.findrecordbynchlno(option.npi_tran_no)) {
+                        log.audit({title: 'DUPLICATE_POST_BLOCKED', details: option.npi_tran_no});
+                        return this.recordexists(option.npi_tran_no);
+                    }
                     return {
                         status: 're-push',
                         message: 'Failed to save payment.'
                     };
                 }
+            },
+            externalidfor: function (nchltranno) {
+                return 'NCHL-' + nchltranno;
+            },
+            recordexists: function (nchltranno) {
+                return {
+                    tran_no: nchltranno,
+                    record_exists: true,
+                    summary: `Record with Transaction Number ${nchltranno} already exist`
+                };
             },
             findrecordbynchlno: function (nchltranno) {
                 let found = false

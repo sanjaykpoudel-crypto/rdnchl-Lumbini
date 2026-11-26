@@ -36,11 +36,7 @@ define(['./npihelper'], function (npi) {
         post: params => {
             log.debug({title: 'NPI_REQUEST', details: params});
             if(npi.findrecordbynchlno(params.tran_no)) {
-                return JSON.stringify({
-                    tran_no: params.tran_no,
-                    record_exists: true,
-                    summary: `Record with Transaction Number ${params.tran_no} already exist`
-                })
+                return JSON.stringify(npi.recordexists(params.tran_no))
             } else {
                 const option = {
                     //subsidiary: params.subsidiary_id,
